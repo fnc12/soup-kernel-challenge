@@ -123,7 +123,38 @@ class MLPRecompute(torch.autograd.Function):
         return dx, None, None
 
 
-def patch_qwen2_mlp(dtype=torch.float16, recompute=False):
+_LAYER_OF = {}
+
+
+def _wants_recompute(mlp, count):
+    """True for the MLPs of the last `count` decoder layers (`layer_idx` of their attention)."""
+    if not count:
+        return False
+    idx, total = _LAYER_OF.get(id(mlp), (None, None))
+    if idx is None:
+        return True  # layer unknown: recompute (the "all layers" behaviour)
+    return idx >= total - count
+
+
+def register_layers(model):
+    """Record which decoder layer each MLP belongs to (called once the model is built)."""
+    layers = getattr(getattr(model, "model", model), "layers", None)
+    if layers is None:
+        base = getattr(model, "get_base_model", None)
+        if callable(base):
+            layers = getattr(getattr(base(), "model", None), "layers", None)
+    if layers is None:
+        return 0
+    for i, layer in enumerate(layers):
+        mlp = getattr(layer, "mlp", None)
+        if mlp is not None:
+            _LAYER_OF[id(mlp)] = (i, len(layers))
+    return len(layers)
+
+
+def patch_qwen2_mlp(dtype=torch.float16, recompute=0):
+    """`recompute`: how many decoder layers (counted from the last one) rebuild their gate|up
+    activations in the backward pass instead of keeping them; 0 keeps everything."""
     from transformers.models.qwen2 import modeling_qwen2
 
     from . import quant
@@ -145,6 +176,8 @@ def patch_qwen2_mlp(dtype=torch.float16, recompute=False):
         return qw
 
     def forward(self, x):
+        if not hasattr(self, "_solution_recompute"):
+            self._solution_recompute = _wants_recompute(self, recompute)
         gate, up, down = (getattr(self, n, None) for n in ("gate_proj", "up_proj", "down_proj"))
         act = getattr(getattr(self, "config", None), "hidden_act", "silu")
         if act != "silu" or not isinstance(x, torch.Tensor) or not x.is_cuda \
@@ -153,7 +186,7 @@ def patch_qwen2_mlp(dtype=torch.float16, recompute=False):
             return original(self, x)
         x16 = x if x.dtype == dtype else x.to(dtype)
         qw_gu, qw_d = merged(self), quant.quant_weight_of(down)
-        if recompute and torch.is_grad_enabled():
+        if recompute and torch.is_grad_enabled() and self._solution_recompute:
             return MLPRecompute.apply(x16, qw_gu, qw_d)
         gu = quant.quant_linear(x16, qw_gu)
         h = SwiGLUGated.apply(gu)

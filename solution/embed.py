@@ -60,6 +60,12 @@ def patch_soup_setup(dtype):
                 shrink_embedding(model, dtype)
             except Exception as exc:  # noqa: BLE001 - never break the setup over a memory saving
                 print(f"solution: embedding left in fp32 ({exc!r})")
+            try:
+                from .fused_mlp import register_layers
+
+                register_layers(model)
+            except Exception as exc:  # noqa: BLE001
+                print(f"solution: layer indices unknown ({exc!r})")
         return result
 
     cls._setup_transformers = _setup_transformers

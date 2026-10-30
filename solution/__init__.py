@@ -64,7 +64,8 @@ def apply():
     if os.environ.get("SOLUTION_NO_EMBED") != "1":
         patch_soup_setup(activation_dtype())
     if os.environ.get("SOLUTION_NO_MLP") != "1":
-        patch_qwen2_mlp(activation_dtype(), recompute=os.environ.get("SOLUTION_RECOMPUTE") == "1")
+        rc = os.environ.get("SOLUTION_RECOMPUTE", "0")
+        patch_qwen2_mlp(activation_dtype(), recompute=(28 if rc == "1" else int(rc or 0)))
     if os.environ.get("SOLUTION_NO_WARMUP") != "1":
         from .warmup import start as warmup_start
 
