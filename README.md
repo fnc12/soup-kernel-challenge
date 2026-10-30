@@ -43,9 +43,13 @@ classes, bitsandbytes' 4-bit linear, TRL's `compute_loss` and Soup's model setup
    states is taken chunk by chunk, so no logits outlive their chunk (the base keeps about 4 GB of
    them: fp16 logits, fp32 upcast, log-softmax, and TRL's and Soup's extra passes). The
    `entropy`, `mean_token_accuracy`, `num_tokens` columns and the per-row losses of `rewind.jsonl`
-   are computed by the same formulas from what the kernel collected (TRL's `compute_loss` is
-   patched; the rewind recorder reads the step from Soup's own `_soup_chunked_step` slot). The
-   idea is the fused linear cross-entropy of Liger Kernel / Unsloth; the code is ours.
+   are computed by the same formulas from what the kernel collected: TRL's `compute_loss` is
+   patched, and the glue that logs the columns follows Soup's own
+   `soup_cli/utils/stream_loss_chunk.py::_log_trl_metrics` (Apache-2.0) and leaves the step in
+   the `_soup_chunked_step` slot the rewind recorder documents for a step without logits. Soup's
+   `training.stream_loss_chunk` switch itself is not enabled (the config is the kit's); the
+   kernel that does the work is ours. The idea is the fused linear cross-entropy of Liger Kernel /
+   Unsloth; the code is ours.
 2. **NF4 unpacking in one pass** (`quant.py`, `nf4_dequant_kernel`). For this batch size
    bitsandbytes does not use its fused GEMM: each projection first rebuilds the double-quantized
    absmax (one kernel), then unpacks the weight (another), then calls cuBLAS, and the backward
@@ -71,10 +75,13 @@ classes, bitsandbytes' 4-bit linear, TRL's `compute_loss` and Soup's model setup
 7. **Padding removed inside the batch** (`packed.py`). TRL pads each batch to its longest row and
    with these rows 42% of the computed positions are padding. After the embedding the decoder
    gathers the real positions once and every layer, the LoRA branches and the output head work on
-   the [1, N_real, D] rows; only the attention scatters q, k, v back into the padded [B, T]
-   layout for SDPA (the base run's causal + padding mask) and gathers its output rows again. Rows
-   are never mixed across batches; the LoRA dropout masks are drawn on the padded shape, as the
-   base run draws them, and gathered. This is the single largest speed-up.
+   the [1, N_real, D] rows. The attention runs PyTorch's SDPA causally per sequence on that
+   sequence's rows: the same attention the base run computes through its causal + padding mask,
+   minus the pad blocks the masked kernel still visits. Rows are never mixed across batches; the
+   LoRA dropout masks are drawn on fp32 ones of the padded [B, T, D] shape, exactly as the base
+   run draws them on its fp32 norm output (PyTorch's fused dropout maps its random numbers to
+   elements by dtype), and gathered, so the masks are the base run's. This is the single largest
+   speed-up.
 
 Accompanying changes (no kernels, but they are where much of the memory went):
 
@@ -83,10 +90,12 @@ Accompanying changes (no kernels, but they are where much of the memory went):
   fp32: with the base run, silu, the product and the LoRA add run in fp32 on fp16-exact values and
   the backward pass keeps fp32 copies. We keep the fp16 result (identical values), the residual
   adds stay fp32.
-- **The embedding table in fp16** (`embed.py`). The frozen, tied embedding / `lm_head` table
-  (0.93 GB in fp32) is kept in the compute dtype: every bf16 checkpoint value with |v| >= 2^-14 is
-  exact in fp16, the head read it through fp16 autocast anyway, and the lookup still returns fp32
-  rows, so the residual stream is unchanged.
+- **The embedding table in fp16** (`embed.py`). On a T4 Soup loads the frozen base in fp16
+  (`soup_cli.utils.gpu.resolve_frozen_base_load_dtype`); PEFT's `prepare_model_for_kbit_training`
+  then upcasts the tied embedding / `lm_head` table to fp32 (0.93 GB). We undo that upcast after
+  the model is built: the table is bit-for-bit what Soup loaded, the head read it through fp16
+  autocast anyway, the lookup still returns fp32 rows (the residual stream is unchanged), the
+  adapter carries no embedding tensor and `eval_adapter.py` reloads the base itself.
 - **Optional MLP recompute** (`SOLUTION_RECOMPUTE=1`): the merged gate|up activations (the largest
   activation: 28 x 4 x 512 x 17,920 x 2 bytes = 2 GB) are rebuilt in the backward pass from the
   saved input instead of being kept; our own autograd function, not Soup's
@@ -141,8 +150,15 @@ Limits and honest notes:
   time.
 - The patches target Qwen2 with NF4 (blocks of 64, double quantization) and PEFT's vanilla LoRA;
   any other layout falls through to the original code paths.
-- Not done: our own attention (SDPA's memory-efficient kernel stays, on the padded layout), and
-  a fused dequant-GEMM.
+- After the q|k|v and gate|up tensors are stacked, the original packed parameters release their
+  storage (they keep their shape as zero-stride views); the training and the adapter never read
+  them again, but a path that would (generation with a KV cache through the original PEFT
+  forward) is not supported in this process.
+- Our own kernels' share of the training time is 17.5%; without the two SwiGLU kernels (the
+  operation the kit's example also fuses, written differently here, likeness 0.60 by the kit's
+  own measure) it is 12.6%, still above the 5% line.
+- Not done: our own attention kernel (PyTorch's SDPA stays, per sequence) and a fused
+  dequant-GEMM.
 
 ## Layout
 
