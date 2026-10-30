@@ -35,9 +35,10 @@ th, td { padding: 12px 28px; text-align: left; border-bottom: 1px solid #2a2f3a;
 th { color: var(--dim); font-weight: normal; font-size: 28px; }
 td.num { font-variant-numeric: tabular-nums; }
 .big { color: var(--acc); font-weight: bold; }
-pre { background: var(--code); border-radius: 14px; padding: 26px 30px; font-size: 26px;
-      line-height: 1.38; margin: 0; font-family: "DejaVu Sans Mono", monospace; overflow: hidden;
-      border-left: 6px solid var(--acc2); white-space: pre; }
+pre { background: var(--code); border-radius: 14px; padding: 22px 26px; font-size: 20px;
+      line-height: 1.4; margin: 0; font-family: "DejaVu Sans Mono", monospace; overflow: hidden;
+      border-left: 6px solid var(--acc2); white-space: pre; max-height: 740px; width: 100%; }
+.col.code { flex: 0 0 900px; }
 .foot { margin-top: auto; color: var(--dim); font-size: 26px; display: flex; justify-content: space-between; }
 .bars { display: flex; flex-direction: column; gap: 18px; font-size: 30px; }
 .bar { display: flex; align-items: center; gap: 20px; }
@@ -56,9 +57,16 @@ def slide(body, foot_left="Solo AI Team · Soup Kernel Challenge · Decentrathon
            f"<div class='foot'><span>{foot_left}</span><span>{foot_right}</span></div></div></body></html>"
 
 
-def code(path, start, end):
-    lines = Path(path).read_text(encoding="utf-8").splitlines()[start - 1:end]
-    return "<pre>" + html.escape("\n".join(lines)) + "</pre>"
+def code(path, marker, n, width=96):
+    """`n` lines of `path` from the first line containing `marker`, cut to `width` columns."""
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    start = next(i for i, line in enumerate(lines) if marker in line)
+    picked = [line[:width] for line in lines[start:start + n]]
+    return "<pre>" + html.escape("\n".join(picked)) + "</pre>"
+
+
+def num(n):
+    return f"{n:,}".replace(",", "\u202f")
 
 
 def build_scenes(n):
@@ -72,12 +80,12 @@ def build_scenes(n):
 <table>
 <tr><th></th><th>База Soup 0.77.0</th><th>Решение</th><th></th></tr>
 <tr><td>Вся команда soup train</td><td class='num'>{b['wall_s']:.1f} с</td><td class='num'>{s['wall_s']:.1f} с</td><td class='big'>{speed:.2f}×</td></tr>
-<tr><td>Пик памяти GPU</td><td class='num'>{b['gpu_peak_mib']:,} МиБ</td><td class='num'>{s['gpu_peak_mib']:,} МиБ</td><td class='big'>{mem:.2f}×</td></tr>
+<tr><td>Пик памяти GPU</td><td class='num'>{num(b['gpu_peak_mib'])} МиБ</td><td class='num'>{num(s['gpu_peak_mib'])} МиБ</td><td class='big'>{mem:.2f}×</td></tr>
 <tr><td>Eval loss адаптера</td><td class='num'>{b['eval_loss']:.5f}</td><td class='num'>{s['eval_loss']:.5f}</td><td>{r['quality_delta_pct']:+.3f}%</td></tr>
 </table>
 <p>Qwen2.5-1.5B-Instruct · NF4 · LoRA r=16 · batch 4 × 512 · 64 шагов · один Tesla T4</p>
 <p>Скрипты организаторов, протокол жюри: два прогона на сторону, все 10 проверок пройдены.</p>
-</div></div>""".replace(",", " ")),
+</div></div>"""),
         f"Это решение команды Solo AI Team для Soup Kernel Challenge. Задача: soup train дообучает "
         f"Qwen два с половиной на четыре бита с LoRA на казахских инструкциях на бесплатной Kaggle T4. "
         f"База занимает около девяноста секунд и четырнадцать гигабайт памяти из пятнадцати. "
@@ -113,7 +121,7 @@ def build_scenes(n):
 <li>градиент по hidden считается тут же: ни одного полного тензора логитов в памяти</li>
 <li>колонки entropy, accuracy, num_tokens и построчные потери rewind — те же формулы</li>
 </ul></div>
-<div class='col'>""" + code("solution/cross_entropy.py", 30, 52) + "</div></div>"),
+<div class='col code'>""" + code("solution/cross_entropy.py", "    row = tl.program_id(0)", 22) + "</div></div>"),
         "Что мы сделали, семь Triton-кернелов. Первый: слитый выходной слой с cross-entropy по "
         "кускам строк. Логиты целиком в памяти не появляются; один кернел за один проход по куску "
         "считает log-sum-exp, потерю, градиент, энтропию и точность, те самые колонки, которые "
@@ -127,7 +135,7 @@ def build_scenes(n):
 <li>q | k | v → одна матрица 2048 × 1536, gate | up → одна 17 920 × 1536</li>
 <li>одна распаковка и один GEMM вместо трёх узких; исходники освобождают память</li>
 </ul></div>
-<div class='col'>""" + code("solution/quant.py", 31, 50) + "</div></div>"),
+<div class='col code'>""" + code("solution/quant.py", "    pid = tl.program_id(0)", 18) + "</div></div>"),
         "Второй: распаковка NF4 в один проход, оба уровня квантования сразу, и для прямого, и для "
         "обратного прохода. Веса q, k, v склеены в одну матрицу, gate и up тоже: одна распаковка и "
         "один GEMM вместо трёх узких."))
@@ -140,7 +148,7 @@ def build_scenes(n):
 <li>RoPE для q и k одним кернелом в каждую сторону вместо цепочки из десяти операций</li>
 <li>активации остаются в fp16, residual-поток fp32; таблица эмбеддингов снова в fp16, в котором Soup её загрузил</li>
 </ul></div>
-<div class='col'>""" + code("solution/rmsnorm.py", 19, 32) + "</div></div>"),
+<div class='col code'>""" + code("solution/rmsnorm.py", "def rmsnorm_fwd_kernel", 14) + "</div></div>"),
         "Дальше: двумерный SwiGLU поверх склеенного буфера, слитый RMSNorm с fp16 на выходе, RoPE "
         "одним кернелом. Активации между матмулами остаются в fp16, таблица эмбеддингов возвращена в "
         "fp16, в котором Soup её и загрузил."))
@@ -153,7 +161,7 @@ def build_scenes(n):
 <li>attention: причинный SDPA по каждой строке на её токенах, без маски и блоков паддинга</li>
 <li>строки между батчами не смешиваются; маски dropout у LoRA те же, что у базы</li>
 </ul></div>
-<div class='col'>""" + code("solution/packed.py", 60, 79) + "</div></div>"),
+<div class='col code'>""" + code("solution/packed.py", "def per_row_attention", 20) + "</div></div>"),
         "И самое весомое по скорости: паддинг убран внутри батча. После эмбеддингов остаются только "
         "реальные токены, все слои считают по ним, а attention идёт по каждой строке отдельно, "
         "причинно, без маски и без блоков паддинга. Строки между батчами не смешиваются, маски "
@@ -169,12 +177,12 @@ def build_scenes(n):
 <table>
 <tr><th></th><th>База</th><th>Решение</th><th></th></tr>
 <tr><td>soup train, среднее двух прогонов</td><td class='num'>{b['wall_s']:.1f} с</td><td class='num'>{s['wall_s']:.1f} с</td><td class='big'>{speed:.2f}×</td></tr>
-<tr><td>пик памяти, nvidia-smi</td><td class='num'>{b['gpu_peak_mib']:,} МиБ</td><td class='num'>{s['gpu_peak_mib']:,} МиБ</td><td class='big'>{mem:.2f}×</td></tr>
+<tr><td>пик памяти, nvidia-smi</td><td class='num'>{num(b['gpu_peak_mib'])} МиБ</td><td class='num'>{num(s['gpu_peak_mib'])} МиБ</td><td class='big'>{mem:.2f}×</td></tr>
 <tr><td>eval loss</td><td class='num'>{b['eval_loss']:.5f}</td><td class='num'>{s['eval_loss']:.5f}</td><td>{r['quality_delta_pct']:+.3f}%</td></tr>
 </table>
 <p>Кривая потерь: первый шаг в пределах 0.01%, в среднем 0.04%. Режим SOLUTION_RECOMPUTE=1: память 3.9×, время 1.4×.</p>
 <div class='checks'>{checks}</div>
-</div></div>""".replace(",", " ")),
+</div></div>"""),
         f"Замер по протоколу жюри, два прогона на сторону: база {b['wall_s']:.0f} секунд, решение "
         f"{s['wall_s']:.0f}, пик памяти {b['gpu_peak_mib']} мегабайт против {s['gpu_peak_mib']}. "
         "Кривая потерь в пределах четырёх сотых процента от базы, eval loss совпадает. Переключатель "
