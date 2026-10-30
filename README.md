@@ -9,15 +9,16 @@ passing, see `results/`):
 
 | | Base Soup 0.77.0 | This solution | Ratio |
 |---|---|---|---|
-| Whole `soup train` command (mean of 2 runs, order base, solution, solution, base) | 85.9 s | 51.9 s | **1.65x** faster |
+| Whole `soup train` command (mean of 2 runs, order base, solution, solution, base) | 82.9 s | 50.4 s | **1.64x** faster |
 | Peak GPU memory (nvidia-smi, max of the runs) | 14,345 MiB | 4,489 MiB | **3.20x** less |
-| Held-out eval loss | 2.04968 | 2.04967 | -0.000% |
+| Held-out eval loss | 2.04965 | 2.04966 | +0.000% |
 | Loss curve vs base | | first step 0.03%, mean 0.04% | |
 | Own Triton kernels, share of training time | | 14.9% | |
 
-The base's wall time on a T4 varied between 82.4 and 91.4 s across our runs (the two runs of this
-measurement: 89.3 and 82.4 s; ours 51.3 and 52.5 s); the previous revision, whose first step
-still paid the kernel compilation, measured 1.53x (`results/t4-run6-rowattn-2repeats`).
+Two measurements of the final code by this protocol: 1.65x (`results/t4-run8-warmup-2repeats`,
+base 85.9 s) and 1.64x (`results/t4-run9-final-2repeats`, base 82.9 s, the table above). The
+base's wall time on a T4 varied between 81.9 and 91.4 s across all our runs; the revision whose
+first step still paid the kernel compilation measured 1.53x (`results/t4-run6-rowattn-2repeats`).
 
 With `SOLUTION_RECOMPUTE=1` (the MLP's gate|up rebuilt in the backward pass) the revision before
 the background compilation measured, by the same protocol, **1.39x** on time and **4.47x** on
@@ -147,7 +148,8 @@ of our Kaggle T4 runs: `t4-run1` (kernels only, 1.33x / 2.57x), `t4-run2-recompu
 protocol, two runs per side: 1.50x / 2.96x), `t4-run6-rowattn-2repeats` (attention per sequence on
 the packed rows, dropout masks as the base's: the table above), `t4-run7-recompute-final` (the
 same code with `SOLUTION_RECOMPUTE=1`, two runs per side), `t4-run8-warmup-2repeats` (kernels
-compiled in the background while the model loads: the table above).
+compiled in the background while the model loads), `t4-run9-final-2repeats` (the final code, with
+the LoRA branch as one addmm: the table above).
 
 Limits and honest notes:
 
