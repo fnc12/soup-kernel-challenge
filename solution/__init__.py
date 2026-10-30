@@ -14,6 +14,8 @@
                                        buffer, the down projection (solution/fused_mlp.py);
 - `Qwen2Attention.forward`          -> one merged q|k|v NF4 matmul + PEFT's LoRA branches, RoPE in
                                        one kernel (solution/attention.py, solution/rope.py);
+- `Qwen2Model.forward`              -> the decoder on the real tokens only, padding removed inside
+                                       the batch (solution/packed.py);
 - `bitsandbytes Linear4bit.forward` -> our NF4 unpacking kernel + cuBLAS, result left in fp16
                                        (solution/lowprec.py, solution/quant.py).
 
@@ -42,6 +44,7 @@ def apply():
         from .embed import patch_soup_setup
         from .fused_mlp import patch_qwen2_mlp
         from .attention import patch_qwen2_attention
+        from .packed import patch_qwen2_model
     except Exception as exc:  # noqa: BLE001 - without triton or trl there is nothing to patch
         if os.environ.get("SOLUTION_STRICT"):
             raise
@@ -62,3 +65,5 @@ def apply():
         patch_qwen2_mlp(activation_dtype(), recompute=os.environ.get("SOLUTION_RECOMPUTE") == "1")
     if os.environ.get("SOLUTION_NO_ATTN") != "1":
         patch_qwen2_attention(activation_dtype(), fused_rope=os.environ.get("SOLUTION_NO_ROPE") != "1")
+        if os.environ.get("SOLUTION_NO_PACK") != "1" and os.environ.get("SOLUTION_NO_CE") != "1":
+            patch_qwen2_model()  # padding removed inside the batch; needs the attention and head patches

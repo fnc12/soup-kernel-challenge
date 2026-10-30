@@ -189,6 +189,13 @@ def patch_qwen2_causal_lm(dtype=torch.float16):
                              inputs_embeds=inputs_embeds, use_cache=use_cache, **kwargs)
         hidden = outputs.last_hidden_state
         shift_labels = _shift(labels).to(hidden.device)
+        pack = getattr(self.model, "_solution_pack", None)
+        self.model._solution_pack = None
+        full_shape = None
+        if pack is not None:  # the decoder ran on the real rows only (solution/packed.py)
+            idx, B, T = pack
+            full_shape = (B, T)
+            shift_labels = shift_labels.reshape(-1).index_select(0, idx).unsqueeze(0)
         if num_items is None:
             denominator = (shift_labels != IGNORE_INDEX).sum().clamp(min=1).to(torch.float32)
         elif torch.is_tensor(num_items):
@@ -198,7 +205,15 @@ def patch_qwen2_causal_lm(dtype=torch.float16):
         steps = []
         loss = FusedHeadCrossEntropy.apply(hidden, HOOK.weight16(lm_head), shift_labels,
                                            denominator, steps)
-        HOOK.last_step = steps[0]
+        step = steps[0]
+        if full_shape is not None:  # metrics back in the padded [B, T] layout (zeros at the pads)
+            B, T = full_shape
+            def unpack(t):
+                return t.new_zeros((B * T,)).index_copy(0, idx, t.reshape(-1)).view(B, T)
+            step = HeadStep(token_entropy=unpack(step.token_entropy),
+                            token_loss=unpack(step.token_loss), correct=step.correct,
+                            labelled=step.labelled)
+        HOOK.last_step = step
         return CausalLMOutputWithPast(loss=loss, logits=None,
                                       past_key_values=outputs.past_key_values,
                                       hidden_states=outputs.hidden_states,

@@ -12,9 +12,10 @@ dropout order, so the same random masks), then the rotary embedding in one kerne
 import torch
 
 
-def _lora_add(module, x, part):
+def _lora_add(module, x, part, pack=None):
     """PEFT's vanilla LoRA branch of `module` added to `part` (its base result), or `part` itself
-    when the module is a plain linear."""
+    when the module is a plain linear. With `pack` (rows gathered from a padded [B, T] batch) the
+    dropout mask is drawn on the padded shape, as the base run draws it, and gathered."""
     lora_A = getattr(module, "lora_A", None)
     if lora_A is None:
         return part
@@ -23,7 +24,14 @@ def _lora_add(module, x, part):
             continue
         a, b = lora_A[adapter], module.lora_B[adapter]
         dropout, scaling = module.lora_dropout[adapter], module.scaling[adapter]
-        part = part + b(a(dropout(x))) * scaling
+        if pack is not None and isinstance(dropout, torch.nn.Dropout) and dropout.p > 0 \
+                and module.training:
+            idx, B, T = pack
+            mask = dropout(torch.ones((B * T, x.shape[-1]), dtype=x.dtype, device=x.device))
+            xd = x * mask.index_select(0, idx).unsqueeze(0)
+        else:
+            xd = dropout(x)
+        part = part + b(a(xd)) * scaling
     return part
 
 
@@ -41,7 +49,7 @@ def _vanilla(module):
 def patch_qwen2_attention(dtype=torch.float16, fused_rope=True):
     from transformers.models.qwen2 import modeling_qwen2
 
-    from . import quant, rope
+    from . import packed, quant, rope
 
     try:
         from bitsandbytes.nn import Linear4bit
@@ -62,8 +70,11 @@ def patch_qwen2_attention(dtype=torch.float16, fused_rope=True):
 
     def forward(self, hidden_states, position_embeddings, attention_mask, past_key_values=None,
                 **kwargs):
+        pack = kwargs.pop("pack", None)
         mods = [getattr(self, n, None) for n in ("q_proj", "k_proj", "v_proj")]
         bases = [getattr(m, "base_layer", m) for m in mods]
+        if pack is not None and (past_key_values is not None or not isinstance(hidden_states, torch.Tensor)):
+            raise RuntimeError("solution: packed rows reached an attention that cannot take them")
         if past_key_values is not None or kwargs.get("adapter_names") is not None \
                 or not isinstance(hidden_states, torch.Tensor) or not hidden_states.is_cuda \
                 or not all(isinstance(b, Linear4bit) and b.bias is not None for b in bases) \
@@ -75,21 +86,33 @@ def patch_qwen2_attention(dtype=torch.float16, fused_rope=True):
         x16 = hidden_states if hidden_states.dtype == dtype else hidden_states.to(dtype)
         qkv = quant.quant_linear(x16, qw) + bias
         q, k, v = torch.split(qkv, sizes, dim=-1)
-        q = _lora_add(mods[0], x16, q)
-        k = _lora_add(mods[1], x16, k)
-        v = _lora_add(mods[2], x16, v)
+        q = _lora_add(mods[0], x16, q, pack)
+        k = _lora_add(mods[1], x16, k, pack)
+        v = _lora_add(mods[2], x16, v, pack)
 
         input_shape = hidden_states.shape[:-1]
-        hidden_shape = (*input_shape, -1, self.head_dim)
         cos, sin = position_embeddings
-        if fused_rope and cos.dim() == 3 and cos.shape[0] in (1, input_shape[0]) \
+        if pack is not None:
+            # rotate the real rows (cos/sin are already gathered per row), then lay q, k, v out in
+            # the padded [B, T] shape for SDPA; the pad rows stay zero and the mask hides them
+            idx, B, T = pack
+            q = rope.rotary(q, cos, sin, self.head_dim, dtype)
+            k = rope.rotary(k, cos, sin, self.head_dim, dtype)
+            q, k, v = (packed.scatter_rows(t, idx, B * T).view(B, T, -1) for t in (q, k, v))
+            input_shape = (B, T)
+            hidden_shape = (*input_shape, -1, self.head_dim)
+            query_states = q.view(hidden_shape).transpose(1, 2)
+            key_states = k.view(hidden_shape).transpose(1, 2)
+        elif fused_rope and cos.dim() == 3 and cos.shape[0] in (1, input_shape[0]) \
                 and cos.shape[1] == input_shape[1] and cos.shape[-1] == self.head_dim \
                 and self.head_dim % 2 == 0:
+            hidden_shape = (*input_shape, -1, self.head_dim)
             q = rope.rotary(q, cos, sin, self.head_dim, dtype)
             k = rope.rotary(k, cos, sin, self.head_dim, dtype)
             query_states = q.view(hidden_shape).transpose(1, 2)
             key_states = k.view(hidden_shape).transpose(1, 2)
         else:
+            hidden_shape = (*input_shape, -1, self.head_dim)
             query_states = q.view(hidden_shape).transpose(1, 2)
             key_states = k.view(hidden_shape).transpose(1, 2)
             query_states, key_states = modeling_qwen2.apply_rotary_pos_emb(query_states, key_states,
@@ -102,6 +125,8 @@ def patch_qwen2_attention(dtype=torch.float16, fused_rope=True):
             dropout=0.0 if not self.training else self.attention_dropout,
             scaling=self.scaling, sliding_window=self.sliding_window, **kwargs)
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
+        if pack is not None:
+            attn_output = packed.gather_rows(attn_output.reshape(B * T, -1), idx)
         attn_output = self.o_proj(attn_output)
         return attn_output, attn_weights
 
