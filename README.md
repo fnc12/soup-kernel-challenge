@@ -15,9 +15,11 @@ passing, see `results/`):
 | Loss curve vs base | | first step 0.03%, mean 0.04% | |
 | Own Triton kernels, share of training time | | 14.9% | |
 
-`results/t4-run10-recompute14-2repeats`. The default configuration rebuilds the gate|up
-activations of the last 14 decoder layers in the backward pass (`SOLUTION_RECOMPUTE=14`); the
-same code with other counts, by the same protocol:
+`results/t4-run10-recompute14-2repeats`; a second measurement of the same configuration through
+the defaults alone (no environment variables, `results/t4-run14-default-2repeats`) gave 1.63x and
+the same 3,809 MiB. The default configuration rebuilds the gate|up activations of the last 14
+decoder layers in the backward pass (`SOLUTION_RECOMPUTE=14`); the same code with other counts,
+by the same protocol:
 
 | `SOLUTION_RECOMPUTE` (layers rebuilt) | Time | Memory | Peak | Results folder |
 |---|---|---|---|---|
