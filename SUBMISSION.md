@@ -53,7 +53,8 @@ each kernel works, the merged weights and the padding-free decoder, results agai
   dequant-GEMM was not attempted (cuBLAS wins on a T4 for these shapes).
 - The patches target Qwen2 + NF4 (blocks of 64, double quantization) + PEFT's vanilla LoRA;
   other layouts fall through to the original code.
-- `SOLUTION_RECOMPUTE=1` trades time for memory: about 1.5x / 4.47x instead of 1.65x / 3.20x by
-  the same protocol; the default keeps the faster configuration.
+- `SOLUTION_RECOMPUTE=1` trades time for memory: measured 1.39x / 4.47x on the revision before
+  the background compilation (default then 1.53x / 3.20x); the default keeps the faster
+  configuration.
 - Next: a Triton attention kernel over the packed rows, and the NF4 unpacking fused into the
   GEMM's operand load.

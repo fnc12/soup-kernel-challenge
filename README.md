@@ -19,9 +19,10 @@ The base's wall time on a T4 varied between 82.4 and 91.4 s across our runs (the
 measurement: 89.3 and 82.4 s; ours 51.3 and 52.5 s); the previous revision, whose first step
 still paid the kernel compilation, measured 1.53x (`results/t4-run6-rowattn-2repeats`).
 
-With `SOLUTION_RECOMPUTE=1` (the MLP's gate|up rebuilt in the backward pass) the same code
-measures, by the same protocol, **1.39x** on time and **4.47x** on memory (peak 3,209 MiB,
-`results/t4-run7-recompute-final`). The default keeps the faster configuration.
+With `SOLUTION_RECOMPUTE=1` (the MLP's gate|up rebuilt in the backward pass) the revision before
+the background compilation measured, by the same protocol, **1.39x** on time and **4.47x** on
+memory (peak 3,209 MiB, `results/t4-run7-recompute-final`; its default measured 1.53x / 3.20x).
+The default keeps the faster configuration.
 
 Kaggle notebook: _link to be added at submission_ (`SUBMISSION.md` carries the final commit).
 
