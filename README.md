@@ -16,8 +16,9 @@ passing, see `results/`):
 | Loss curve vs base | | first step 0.01%, mean 0.04% | |
 | Own Triton kernels, share of training time | | 17.5% | |
 
-With `SOLUTION_RECOMPUTE=1` (the MLP's gate|up rebuilt in the backward pass) the same run peaks
-at about 3.6 GB of GPU memory (4.0x less than the base) and the 64 steps take 37.3 s (1.48x).
+With `SOLUTION_RECOMPUTE=1` (the MLP's gate|up rebuilt in the backward pass) the same code
+measures 1.40x on time and 3.90x on memory (peak 3,681 MiB; `results/t4-run4-packed-recompute`).
+Run-to-run noise of the base on a T4 in our runs: 88.8-91.2 s wall, 55.2-58.3 s for the steps.
 
 Kaggle notebook: _link to be added at submission_ (`SUBMISSION.md` carries the final commit).
 
@@ -121,8 +122,8 @@ Switches (environment variables, for ablations; all off by default except where 
 
 `results/` holds the raw `result.json`, `checks.json`, per-run `metrics.json` and a kernel profile
 of our Kaggle T4 runs: `t4-run1` (kernels only, 1.33x / 2.57x), `t4-run2-recompute` (1.18x / 3.74x),
-`t4-run3-packed` (padding removed: the table above; its `rc_solution_1_metrics.json` is the
-recompute variant of the same code).
+`t4-run3-packed` (padding removed: the table above), `t4-run4-packed-recompute` (the same code
+with `SOLUTION_RECOMPUTE=1`).
 
 Limits and honest notes:
 
