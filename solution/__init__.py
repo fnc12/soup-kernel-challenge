@@ -11,7 +11,8 @@
 - `SFTTrainerWrapper._setup_transformers` -> the frozen embedding / head table kept in the compute
                                        dtype, the residual stream still fp32 (solution/embed.py);
 - `Qwen2MLP.forward`                -> one merged gate|up NF4 matmul, a 2-D SwiGLU kernel over that
-                                       buffer, the down projection (solution/fused_mlp.py);
+                                       buffer, the down projection; the last 14 layers rebuild their
+                                       gate|up in the backward pass (solution/fused_mlp.py);
 - `Qwen2Attention.forward`          -> one merged q|k|v NF4 matmul + PEFT's LoRA branches, RoPE in
                                        one kernel (solution/attention.py, solution/rope.py);
 - `Qwen2Model.forward`              -> the decoder on the real tokens only, padding removed inside
@@ -64,7 +65,7 @@ def apply():
     if os.environ.get("SOLUTION_NO_EMBED") != "1":
         patch_soup_setup(activation_dtype())
     if os.environ.get("SOLUTION_NO_MLP") != "1":
-        rc = os.environ.get("SOLUTION_RECOMPUTE", "0")
+        rc = os.environ.get("SOLUTION_RECOMPUTE", "14")  # the last 14 layers: measured as free
         patch_qwen2_mlp(activation_dtype(), recompute=(28 if rc == "1" else int(rc or 0)))
     if os.environ.get("SOLUTION_NO_WARMUP") != "1":
         from .warmup import start as warmup_start
