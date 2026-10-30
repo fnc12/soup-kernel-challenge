@@ -275,7 +275,7 @@ def main():
         print(f"scene {i}: {d:.1f} s", file=sys.stderr)
     lst = out / "list.txt"
     lst.write_text("".join(f"file '{p.resolve()}'\n" for p in parts))
-    final = out / "soup-kernel-challenge-solo-ai-team.mp4"
+    final = out / "soup-kernel-challenge.mp4"
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst), "-c",
                     "copy", str(final)], check=True)
     print(f"{final}: {duration(final):.1f} s, {os.path.getsize(final) / 1e6:.1f} MB")
