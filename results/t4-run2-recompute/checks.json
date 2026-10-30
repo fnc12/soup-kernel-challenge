@@ -1,0 +1,57 @@
+{
+  "result_sha256": "474a58090e70661a848ba33ee456f2f3a704b6c19600b7423fa7fca4cc249091",
+  "solution_sha256": "95de029b32c0f39c6ced42b168181f8c26925282e10fa5c782dbc36f1e1a6d2e",
+  "checks": [
+    {
+      "check": "1. every base and solution run finished",
+      "ok": true,
+      "detail": "1 base and 1 solution runs of 1 each"
+    },
+    {
+      "check": "2. no ready-made kernel libraries",
+      "ok": true,
+      "detail": "loaded: none; imported in solution/: none; packages changed during the run: none"
+    },
+    {
+      "check": "3. own @triton.jit kernels in solution/ run in training",
+      "ok": true,
+      "detail": "head_ce_kernel (solution/cross_entropy.py), nf4_dequant_kernel (solution/quant.py), rmsnorm_bwd_kernel (solution/rmsnorm.py), rmsnorm_fwd_kernel (solution/rmsnorm.py), rope_kernel (solution/rope.py), swiglu_gated_bwd_kernel (solution/fused_mlp.py), swiglu_gated_kernel (solution/fused_mlp.py)"
+    },
+    {
+      "check": "4. own kernels together take >= 5% of the training time",
+      "ok": true,
+      "detail": "12.5% of the training time (lowest of 1 runs, steps 3+)"
+    },
+    {
+      "check": "5. same task and Soup outputs (steps, adapter, settings, tokens, metrics, rewind)",
+      "ok": true,
+      "detail": "identical within tolerance"
+    },
+    {
+      "check": "6. loss curve follows the base",
+      "ok": true,
+      "detail": "solution_1: first step 0.01%, mean of all steps 0.05% (max 1% and 3%)"
+    },
+    {
+      "check": "7. quality: eval loss at most 0.5% above the base",
+      "ok": true,
+      "detail": "-0.008%"
+    },
+    {
+      "check": "8. not worse than the base on time or memory (10% margin)",
+      "ok": true,
+      "detail": "time x0.845, memory x0.267 of the base"
+    },
+    {
+      "check": "9. clean measurement (a T4, idle GPUs, one GPU, harness allocator, peaks agree)",
+      "ok": true,
+      "detail": "clean"
+    },
+    {
+      "check": "10. Soup regression tests with your patches",
+      "ok": true,
+      "detail": "79 passed, 14 warnings in 0.47s"
+    }
+  ],
+  "notes": []
+}

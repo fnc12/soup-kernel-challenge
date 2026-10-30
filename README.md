@@ -9,12 +9,15 @@ passing, see `results/`):
 
 | | Base Soup 0.77.0 | This solution | Ratio |
 |---|---|---|---|
-| Whole `soup train` command | 91.2 s | 68.7 s | **1.33x** faster |
-| The 64 training steps | 56.5 s | 46.2 s | 1.22x |
-| Peak GPU memory (nvidia-smi) | 14,345 MiB | 5,591 MiB | **2.57x** less |
-| Held-out eval loss | 2.04964 | 2.04948 | -0.008% |
+| Whole `soup train` command | 90.4 s | 58.6 s | **1.54x** faster |
+| The 64 training steps | 55.2 s | 33.2 s | 1.66x |
+| Peak GPU memory (nvidia-smi) | 14,345 MiB | 4,841 MiB | **2.96x** less |
+| Held-out eval loss | 2.04965 | 2.04950 | -0.007% |
 | Loss curve vs base | | first step 0.01%, mean 0.04% | |
-| Own Triton kernels, share of training time | | 14.0% | |
+| Own Triton kernels, share of training time | | 17.5% | |
+
+With `SOLUTION_RECOMPUTE=1` (the MLP's gate|up rebuilt in the backward pass) the same run peaks
+at about 3.6 GB of GPU memory (4.0x less than the base) and the 64 steps take 37.3 s (1.48x).
 
 Kaggle notebook: _link to be added at submission_ (`SUBMISSION.md` carries the final commit).
 
@@ -62,6 +65,14 @@ classes, bitsandbytes' 4-bit linear, TRL's `compute_loss` and Soup's model setup
 6. **Rotary embedding in one kernel each way** (`rope.py`): replaces the slice / negate /
    concatenate / multiply / add chain for q and k (and its backward) with one program per position.
 
+7. **Padding removed inside the batch** (`packed.py`). TRL pads each batch to its longest row and
+   with these rows 42% of the computed positions are padding. After the embedding the decoder
+   gathers the real positions once and every layer, the LoRA branches and the output head work on
+   the [1, N_real, D] rows; only the attention scatters q, k, v back into the padded [B, T]
+   layout for SDPA (the base run's causal + padding mask) and gathers its output rows again. Rows
+   are never mixed across batches; the LoRA dropout masks are drawn on the padded shape, as the
+   base run draws them, and gathered. This is the single largest speed-up.
+
 Accompanying changes (no kernels, but they are where much of the memory went):
 
 - **fp16 activations between the 4-bit matmuls** (`lowprec.py`). `prepare_model_for_kbit_training`
@@ -108,8 +119,10 @@ Switches (environment variables, for ablations; all off by default except where 
 
 ## Results and limits
 
-`results/` holds the raw `result.json`, `checks.json` and per-run `metrics.json` of our Kaggle T4
-runs (the table above is `results/t4-run1`).
+`results/` holds the raw `result.json`, `checks.json`, per-run `metrics.json` and a kernel profile
+of our Kaggle T4 runs: `t4-run1` (kernels only, 1.33x / 2.57x), `t4-run2-recompute` (1.18x / 3.74x),
+`t4-run3-packed` (padding removed: the table above; its `rc_solution_1_metrics.json` is the
+recompute variant of the same code).
 
 Limits and honest notes:
 
@@ -124,8 +137,8 @@ Limits and honest notes:
   time.
 - The patches target Qwen2 with NF4 (blocks of 64, double quantization) and PEFT's vanilla LoRA;
   any other layout falls through to the original code paths.
-- Not done: our own attention (SDPA's memory-efficient kernel stays), a fused dequant-GEMM, and
-  padding removal inside the batch.
+- Not done: our own attention (SDPA's memory-efficient kernel stays, on the padded layout), and
+  a fused dequant-GEMM.
 
 ## Layout
 
@@ -134,7 +147,7 @@ Limits and honest notes:
 | `solution/__init__.py` | `apply()`: the patches, in order, with their guards |
 | `solution/cross_entropy.py` | fused head + cross-entropy, TRL metrics, rewind step |
 | `solution/quant.py` | NF4 unpacking kernel, merged weights, `QuantLinear` |
-| `solution/attention.py`, `solution/rope.py` | merged q\|k\|v attention, rotary kernel |
+| `solution/attention.py`, `solution/rope.py`, `solution/packed.py` | merged q\|k\|v attention, rotary kernel, padding removed inside the batch |
 | `solution/fused_mlp.py` | merged gate\|up MLP, gated SwiGLU kernels, optional recompute |
 | `solution/rmsnorm.py`, `solution/lowprec.py`, `solution/embed.py` | RMSNorm kernel, fp16 activations, fp16 embedding |
 | `solution/test_kernels.py` | every kernel against PyTorch / bitsandbytes, forward and backward |
