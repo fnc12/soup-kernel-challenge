@@ -9,18 +9,18 @@ passing, see `results/`):
 
 | | Base Soup 0.77.0 | This solution | Ratio |
 |---|---|---|---|
-| Whole `soup train` command (mean of 2 runs, order base, solution, solution, base) | 88.9 s | 59.1 s | **1.50x** faster |
-| Peak GPU memory (nvidia-smi, max of the runs) | 14,345 MiB | 4,841 MiB | **2.96x** less |
-| Held-out eval loss | 2.04966 | 2.04952 | -0.007% |
-| Loss curve vs base | | first step 0.01%, mean 0.04% | |
-| Own Triton kernels, share of training time | | 17.5% | |
+| Whole `soup train` command (mean of 2 runs, order base, solution, solution, base) | 87.6 s | 57.3 s | **1.53x** faster |
+| Peak GPU memory (nvidia-smi, max of the runs) | 14,345 MiB | 4,489 MiB | **3.20x** less |
+| Held-out eval loss | 2.04966 | 2.04965 | -0.000% |
+| Loss curve vs base | | first step 0.03%, mean 0.04% | |
+| Own Triton kernels, share of training time | | 14.9% | |
 
-Single runs of the same code measured 1.54x (`results/t4-run3-packed`); the base's wall time on a
-T4 varied between 87.2 and 91.2 s across our runs.
+The base's wall time on a T4 varied between 85.0 and 91.2 s across our runs (the two runs of this
+measurement: 90.3 and 85.0 s; ours 56.7 and 58.0 s).
 
-With `SOLUTION_RECOMPUTE=1` (the MLP's gate|up rebuilt in the backward pass) the same code
-measures 1.40x on time and 3.90x on memory (peak 3,681 MiB; `results/t4-run4-packed-recompute`).
-Run-to-run noise of the base on a T4 in our runs: 88.8-91.2 s wall, 55.2-58.3 s for the steps.
+With `SOLUTION_RECOMPUTE=1` (the MLP's gate|up rebuilt in the backward pass) the previous
+revision measured 1.40x on time and 3.90x on memory (peak 3,681 MiB;
+`results/t4-run4-packed-recompute`); the default keeps the faster configuration.
 
 Kaggle notebook: _link to be added at submission_ (`SUBMISSION.md` carries the final commit).
 
@@ -134,8 +134,9 @@ Switches (environment variables, for ablations; all off by default except where 
 `results/` holds the raw `result.json`, `checks.json`, per-run `metrics.json` and a kernel profile
 of our Kaggle T4 runs: `t4-run1` (kernels only, 1.33x / 2.57x), `t4-run2-recompute` (1.18x / 3.74x),
 `t4-run3-packed` (padding removed, one run each, with a kernel profile), `t4-run4-packed-recompute`
-(the same code with `SOLUTION_RECOMPUTE=1`), `t4-run5-packed-2repeats` (the jury's protocol, two
-runs per side: the table above).
+(the same code with `SOLUTION_RECOMPUTE=1`: 1.40x / 3.90x), `t4-run5-packed-2repeats` (the jury's
+protocol, two runs per side: 1.50x / 2.96x), `t4-run6-rowattn-2repeats` (attention per sequence on
+the packed rows, dropout masks as the base's: the table above).
 
 Limits and honest notes:
 
@@ -154,9 +155,9 @@ Limits and honest notes:
   storage (they keep their shape as zero-stride views); the training and the adapter never read
   them again, but a path that would (generation with a KV cache through the original PEFT
   forward) is not supported in this process.
-- Our own kernels' share of the training time is 17.5%; without the two SwiGLU kernels (the
-  operation the kit's example also fuses, written differently here, likeness 0.60 by the kit's
-  own measure) it is 12.6%, still above the 5% line.
+- Our own kernels' share of the training time is 14.9% (lowest of two runs); without the two
+  SwiGLU kernels (the operation the kit's example also fuses, written differently here, likeness
+  0.60 by the kit's own measure) it stays above 10%, well over the 5% line.
 - Not done: our own attention kernel (PyTorch's SDPA stays, per sequence) and a fused
   dequant-GEMM.
 

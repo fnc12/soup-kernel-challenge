@@ -21,8 +21,8 @@
 | `rmsnorm_fwd_kernel`, `rmsnorm_bwd_kernel` | `solution/rmsnorm.py` | Qwen2RMSNorm's five fp32 ops and three saved copies | 0.6% + 0.7% |
 | `rope_kernel` | `solution/rope.py` | slice / negate / concatenate / multiply / add of the rotary embedding for q and k, forward and backward | 2.7% |
 
-(shares from `results/t4-run3-packed/solution_1_metrics.json`: 17.5% together, 12.6% without the
-SwiGLU pair)
+(shares from `results/t4-run3-packed/solution_1_metrics.json`; the final revision measures 14.9%
+together, `results/t4-run6-rowattn-2repeats`)
 
 Ideas taken from other kernels, with links (we wrote the code ourselves):
 - fused linear cross-entropy in row chunks: Liger Kernel
@@ -36,9 +36,9 @@ Ideas taken from other kernels, with links (we wrote the code ourselves):
 ## Results on Kaggle T4 (from `runs/result.json` and `runs/checks.json` of the notebook above)
 | | Base Soup | Ours | Ratio |
 |---|---|---|---|
-| Time of `soup train`, s (mean of 2 runs) | 88.9 | 59.1 | speedup 1.50x |
-| Peak GPU memory, MiB | 14,345 | 4,841 | base/ours 2.96x |
-| Eval loss (public rows) | 2.04966 | 2.04952 | -0.007% vs base |
+| Time of `soup train`, s (mean of 2 runs) | 87.6 | 57.3 | speedup 1.53x |
+| Peak GPU memory, MiB | 14,345 | 4,489 | base/ours 3.20x |
+| Eval loss (public rows) | 2.04966 | 2.04965 | -0.000% vs base |
 
 - [x] All 10 checks of `harness/check_rules.py` passed
 - [x] README.md rewritten for our solution: what we did, how to run it, results, limits
