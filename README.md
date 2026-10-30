@@ -18,9 +18,9 @@ passing, see `results/`):
 The base's wall time on a T4 varied between 85.0 and 91.2 s across our runs (the two runs of this
 measurement: 90.3 and 85.0 s; ours 56.7 and 58.0 s).
 
-With `SOLUTION_RECOMPUTE=1` (the MLP's gate|up rebuilt in the backward pass) the previous
-revision measured 1.40x on time and 3.90x on memory (peak 3,681 MiB;
-`results/t4-run4-packed-recompute`); the default keeps the faster configuration.
+With `SOLUTION_RECOMPUTE=1` (the MLP's gate|up rebuilt in the backward pass) the same code
+measures, by the same protocol, **1.39x** on time and **4.47x** on memory (peak 3,209 MiB,
+`results/t4-run7-recompute-final`). The default keeps the faster configuration.
 
 Kaggle notebook: _link to be added at submission_ (`SUBMISSION.md` carries the final commit).
 
@@ -136,7 +136,8 @@ of our Kaggle T4 runs: `t4-run1` (kernels only, 1.33x / 2.57x), `t4-run2-recompu
 `t4-run3-packed` (padding removed, one run each, with a kernel profile), `t4-run4-packed-recompute`
 (the same code with `SOLUTION_RECOMPUTE=1`: 1.40x / 3.90x), `t4-run5-packed-2repeats` (the jury's
 protocol, two runs per side: 1.50x / 2.96x), `t4-run6-rowattn-2repeats` (attention per sequence on
-the packed rows, dropout masks as the base's: the table above).
+the packed rows, dropout masks as the base's: the table above), `t4-run7-recompute-final` (the
+same code with `SOLUTION_RECOMPUTE=1`, two runs per side).
 
 Limits and honest notes:
 
