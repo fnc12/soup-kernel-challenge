@@ -5,7 +5,8 @@ unpackings, three GEMMs (two of them only 256 columns wide, a poor shape for ten
 bias adds and three casts back to fp32, plus PEFT's LoRA branch on q and v. Here the three packed
 weights are stacked once into one [2048, 1536] NF4 weight (solution/quant.py): one unpacking, one
 GEMM, one bias add, then the LoRA branches exactly as PEFT computes them (same modules, same
-dropout order, so the same random masks), then the rotary embedding, SDPA and o_proj as before.
+dropout order, so the same random masks), then the rotary embedding in one kernel
+(solution/rope.py), SDPA and o_proj as before.
 """
 
 import torch
@@ -37,10 +38,10 @@ def _vanilla(module):
     return not any(adapter in variants for adapter in module.active_adapters)
 
 
-def patch_qwen2_attention(dtype=torch.float16):
+def patch_qwen2_attention(dtype=torch.float16, fused_rope=True):
     from transformers.models.qwen2 import modeling_qwen2
 
-    from . import quant
+    from . import quant, rope
 
     try:
         from bitsandbytes.nn import Linear4bit
@@ -80,12 +81,19 @@ def patch_qwen2_attention(dtype=torch.float16):
 
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
-        query_states = q.view(hidden_shape).transpose(1, 2)
-        key_states = k.view(hidden_shape).transpose(1, 2)
-        value_states = v.view(hidden_shape).transpose(1, 2)
         cos, sin = position_embeddings
-        query_states, key_states = modeling_qwen2.apply_rotary_pos_emb(query_states, key_states,
-                                                                       cos, sin)
+        if fused_rope and cos.dim() == 3 and tuple(cos.shape[:2]) == tuple(input_shape) \
+                and cos.shape[-1] == self.head_dim and self.head_dim % 2 == 0:
+            q = rope.rotary(q, cos, sin, self.head_dim, dtype)
+            k = rope.rotary(k, cos, sin, self.head_dim, dtype)
+            query_states = q.view(hidden_shape).transpose(1, 2)
+            key_states = k.view(hidden_shape).transpose(1, 2)
+        else:
+            query_states = q.view(hidden_shape).transpose(1, 2)
+            key_states = k.view(hidden_shape).transpose(1, 2)
+            query_states, key_states = modeling_qwen2.apply_rotary_pos_emb(query_states, key_states,
+                                                                           cos, sin)
+        value_states = v.view(hidden_shape).transpose(1, 2)
         attention_interface = modeling_qwen2.ALL_ATTENTION_FUNCTIONS.get_interface(
             self.config._attn_implementation, modeling_qwen2.eager_attention_forward)
         attn_output, attn_weights = attention_interface(

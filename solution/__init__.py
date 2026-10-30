@@ -12,8 +12,8 @@
                                        dtype, the residual stream still fp32 (solution/embed.py);
 - `Qwen2MLP.forward`                -> one merged gate|up NF4 matmul, a 2-D SwiGLU kernel over that
                                        buffer, the down projection (solution/fused_mlp.py);
-- `Qwen2Attention.forward`          -> one merged q|k|v NF4 matmul + PEFT's LoRA branches
-                                       (solution/attention.py);
+- `Qwen2Attention.forward`          -> one merged q|k|v NF4 matmul + PEFT's LoRA branches, RoPE in
+                                       one kernel (solution/attention.py, solution/rope.py);
 - `bitsandbytes Linear4bit.forward` -> our NF4 unpacking kernel + cuBLAS, result left in fp16
                                        (solution/lowprec.py, solution/quant.py).
 
@@ -61,4 +61,4 @@ def apply():
     if os.environ.get("SOLUTION_NO_MLP") != "1":
         patch_qwen2_mlp(activation_dtype(), recompute=os.environ.get("SOLUTION_RECOMPUTE") == "1")
     if os.environ.get("SOLUTION_NO_ATTN") != "1":
-        patch_qwen2_attention(activation_dtype())
+        patch_qwen2_attention(activation_dtype(), fused_rope=os.environ.get("SOLUTION_NO_ROPE") != "1")

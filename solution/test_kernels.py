@@ -198,3 +198,34 @@ def test_mlp_recompute_matches_the_kept_path():
     out.backward(grad)
     torch.testing.assert_close(out, ref, rtol=1e-2, atol=1e-2)
     torch.testing.assert_close(x.grad, ref_dx, rtol=1e-2, atol=1e-2)
+
+
+@pytest.mark.parametrize("in_dtype,out_dtype", [(torch.float16, torch.float16),
+                                                (torch.float32, torch.float16)])
+@pytest.mark.parametrize("heads", [12, 2])
+def test_rotary_matches_transformers(in_dtype, out_dtype, heads):
+    from transformers.models.qwen2.modeling_qwen2 import apply_rotary_pos_emb
+
+    from solution.rope import rotary
+
+    torch.manual_seed(0)
+    B, T, D = 2, 37, 64
+    x = torch.randn(B, T, heads * D, device="cuda", dtype=in_dtype, requires_grad=True)
+    pos = torch.arange(T, device="cuda").float()
+    inv = 1.0 / (10000 ** (torch.arange(0, D, 2, device="cuda").float() / D))
+    freqs = torch.cat([pos[:, None] * inv[None, :]] * 2, dim=-1)
+    cos, sin = freqs.cos().expand(B, T, D).contiguous(), freqs.sin().expand(B, T, D).contiguous()
+    grad = torch.randn(B, T, heads * D, device="cuda", dtype=out_dtype)
+
+    q = x.view(B, T, heads, D).transpose(1, 2)
+    ref, _ = apply_rotary_pos_emb(q, q, cos, sin)
+    ref = ref.transpose(1, 2).reshape(B, T, heads * D)
+    ref.backward(grad.to(ref.dtype))
+    ref_dx = x.grad.clone()
+    x.grad = None
+
+    out = rotary(x, cos, sin, D, out_dtype)
+    assert out.dtype == out_dtype
+    out.backward(grad)
+    torch.testing.assert_close(out.float(), ref.float(), rtol=2e-3, atol=2e-3)
+    torch.testing.assert_close(x.grad.float(), ref_dx.float(), rtol=2e-3, atol=2e-3)
