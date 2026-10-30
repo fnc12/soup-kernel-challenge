@@ -118,3 +118,35 @@ def test_fused_head_cross_entropy_matches_pytorch(shape, vocab):
     torch.testing.assert_close(step.token_loss, ref_token_loss, rtol=1e-4, atol=1e-4)
     assert int(step.correct) == int(ref_hits)
     assert int(step.labelled) == int((shift != IGNORE_INDEX).sum())
+
+
+@pytest.mark.parametrize("shape", [(8960, 1536), (1536, 8960), (256, 1536), (152, 1536)])
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+def test_nf4_dequant_matches_bitsandbytes(shape, dtype):
+    bnb = pytest.importorskip("bitsandbytes")
+    from solution.nf4 import dequantize_nf4, quant_linear, supported
+
+    torch.manual_seed(0)
+    w = torch.randn(shape, device="cuda") * 0.05
+    packed, state = bnb.functional.quantize_4bit(w, blocksize=64, compress_statistics=True,
+                                                 quant_type="nf4")
+    assert supported(state)
+    ref = bnb.functional.dequantize_4bit(packed, state).to(dtype)
+    out = dequantize_nf4(packed, state, dtype)
+    assert out.shape == tuple(shape) and out.dtype == dtype
+    # bitsandbytes rounds the second-level absmax once more than our fused fma does: a few
+    # values per million differ by one unit in the last place of fp16
+    ulp = 1e-3 if dtype == torch.float16 else 8e-3
+    torch.testing.assert_close(out, ref, rtol=ulp, atol=ulp * 0.05)
+    assert (out != ref).float().mean().item() < 1e-3
+
+    x = torch.randn(3, 10, shape[1], device="cuda", dtype=dtype, requires_grad=True)
+    grad = torch.randn(3, 10, shape[0], device="cuda", dtype=dtype)
+    ref_out = torch.nn.functional.linear(x, ref)
+    ref_out.backward(grad)
+    ref_dx = x.grad.clone()
+    x.grad = None
+    out = quant_linear(x, packed, state)
+    out.backward(grad)
+    torch.testing.assert_close(out, ref_out, rtol=1e-2, atol=1e-2)
+    torch.testing.assert_close(x.grad, ref_dx, rtol=1e-2, atol=1e-2)

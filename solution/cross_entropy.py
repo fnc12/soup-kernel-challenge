@@ -102,8 +102,8 @@ class FusedHeadCrossEntropy(torch.autograd.Function):
         BLOCK_V = 4096
         for start in range(0, n, ROWS):
             stop = min(start + ROWS, n)
-            h16 = h[start:stop].to(torch.float16)
-            logits = torch.matmul(h16, weight16.t())  # (rows, V) fp16, as autocast does
+            h16 = h[start:stop].to(weight16.dtype)
+            logits = torch.matmul(h16, weight16.t())  # (rows, V) in the autocast dtype
             grad = torch.empty_like(logits)
             head_ce_kernel[(stop - start,)](logits, labels[start:stop], grad, loss[start:stop],
                                             entropy[start:stop], hits[start:stop],
@@ -139,12 +139,17 @@ class HeadHook:
         self._weight16 = None
         self._weight_key = None
         self.enabled = True
+        self.dtype = torch.float16  # the matmul dtype of the head: what autocast uses on this card
 
     def weight16(self, lm_head):
+        """The head's table in the matmul dtype: the parameter itself when it already is (see
+        solution/embed.py), otherwise one cached cast."""
         w = lm_head.weight
+        if w.dtype == self.dtype and w.is_contiguous():
+            return w.detach()
         key = (w.data_ptr(), w.shape, w.dtype, w.device)
         if self._weight_key != key or self._weight16 is None:
-            self._weight16 = w.detach().to(torch.float16).contiguous()
+            self._weight16 = w.detach().to(self.dtype).contiguous()
             self._weight_key = key
         return self._weight16
 
@@ -160,7 +165,8 @@ def _shift(labels):
     return torch.nn.functional.pad(labels, (0, 1), value=IGNORE_INDEX)[..., 1:]
 
 
-def patch_qwen2_causal_lm():
+def patch_qwen2_causal_lm(dtype=torch.float16):
+    HOOK.dtype = dtype
     from transformers.models.qwen2 import modeling_qwen2
     from transformers.modeling_outputs import CausalLMOutputWithPast
 

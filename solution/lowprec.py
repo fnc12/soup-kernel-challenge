@@ -16,12 +16,26 @@ backward pass saves in the attention and MLP blocks is half the size.
 import torch
 
 
-def patch_bnb_linear4bit():
+def activation_dtype():
+    """What Soup computes in on this card: bf16 where the GPU has bf16 units, else fp16 (a T4)."""
+    try:
+        from soup_cli.utils.gpu import cuda_supports_bf16
+
+        return torch.bfloat16 if cuda_supports_bf16() else torch.float16
+    except Exception:  # noqa: BLE001
+        if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8:
+            return torch.bfloat16
+        return torch.float16
+
+
+def patch_bnb_linear4bit(own_dequant=True):
     try:
         import bitsandbytes as bnb
         from bitsandbytes.nn import modules
     except Exception:  # noqa: BLE001 - no bitsandbytes (the regression tests): nothing to patch
         return False
+    from . import nf4
+
     cls = modules.Linear4bit
     original = cls.forward
 
@@ -38,6 +52,8 @@ def patch_bnb_linear4bit():
             self.compute_type_is_set = True
         if x.dtype != compute_dtype:
             x = x.to(compute_dtype)
+        if own_dequant and nf4.supported(quant_state) and x.shape[-1] == quant_state.shape[1]:
+            return nf4.quant_linear(x, self.weight, quant_state)
         return bnb.matmul_4bit(x, self.weight, bias=None, quant_state=quant_state)
 
     cls.forward = forward
