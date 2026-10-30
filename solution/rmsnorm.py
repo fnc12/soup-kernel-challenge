@@ -15,7 +15,7 @@ import triton
 import triton.language as tl
 
 
-@triton.jit
+@triton.jit(do_not_specialize=["stride_x", "stride_y", "D"])
 def rmsnorm_fwd_kernel(x_ptr, w_ptr, y_ptr, rstd_ptr, stride_x, stride_y, D, eps,
                        BLOCK_D: tl.constexpr):
     row = tl.program_id(0)
@@ -30,7 +30,7 @@ def rmsnorm_fwd_kernel(x_ptr, w_ptr, y_ptr, rstd_ptr, stride_x, stride_y, D, eps
     tl.store(y_ptr + row * stride_y + cols, y.to(y_ptr.dtype.element_ty), mask=mask)
 
 
-@triton.jit
+@triton.jit(do_not_specialize=["stride_dy", "stride_x", "stride_dx", "D"])
 def rmsnorm_bwd_kernel(dy_ptr, x_ptr, w_ptr, rstd_ptr, dx_ptr, dw_ptr, stride_dy, stride_x,
                        stride_dx, D, WITH_DW: tl.constexpr, BLOCK_D: tl.constexpr):
     row = tl.program_id(0)

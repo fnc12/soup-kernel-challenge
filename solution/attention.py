@@ -24,11 +24,19 @@ def _lora_add(module, x, part, pack=None):
             continue
         a, b = lora_A[adapter], module.lora_B[adapter]
         dropout, scaling = module.lora_dropout[adapter], module.scaling[adapter]
-        if pack is not None and isinstance(dropout, torch.nn.Dropout) and dropout.p > 0 \
-                and module.training:
-            idx, B, T = pack
-            mask = dropout(torch.ones((B * T, x.shape[-1]), dtype=x.dtype, device=x.device))
-            xd = x * mask.index_select(0, idx).unsqueeze(0)
+        if isinstance(dropout, torch.nn.Dropout) and dropout.p > 0 and module.training:
+            # the base run calls dropout on the fp32 [B, T, D] norm output; PyTorch's fused
+            # dropout maps its random numbers to elements by dtype (4 per thread for fp32, 8 for
+            # fp16), so the mask is drawn on fp32 ones of that shape and gathered: same stream,
+            # same masks
+            D = x.shape[-1]
+            if pack is not None:
+                idx, B, T = pack[:3]
+                mask = dropout(torch.ones((B, T, D), dtype=torch.float32, device=x.device))
+                xd = x * mask.view(B * T, D).index_select(0, idx).unsqueeze(0).to(x.dtype)
+            else:
+                mask = dropout(torch.ones(x.shape, dtype=torch.float32, device=x.device))
+                xd = x * mask.to(x.dtype)
         else:
             xd = dropout(x)
         part = part + b(a(xd)) * scaling
@@ -73,7 +81,8 @@ def patch_qwen2_attention(dtype=torch.float16, fused_rope=True):
         pack = kwargs.pop("pack", None)
         mods = [getattr(self, n, None) for n in ("q_proj", "k_proj", "v_proj")]
         bases = [getattr(m, "base_layer", m) for m in mods]
-        if pack is not None and (past_key_values is not None or not isinstance(hidden_states, torch.Tensor)):
+        if pack is not None and (past_key_values is not None or not isinstance(hidden_states, torch.Tensor)
+                                 or not self.training or self.attention_dropout):
             raise RuntimeError("solution: packed rows reached an attention that cannot take them")
         if past_key_values is not None or kwargs.get("adapter_names") is not None \
                 or not isinstance(hidden_states, torch.Tensor) or not hidden_states.is_cuda \
@@ -93,16 +102,17 @@ def patch_qwen2_attention(dtype=torch.float16, fused_rope=True):
         input_shape = hidden_states.shape[:-1]
         cos, sin = position_embeddings
         if pack is not None:
-            # rotate the real rows (cos/sin are already gathered per row), then lay q, k, v out in
-            # the padded [B, T] shape for SDPA; the pad rows stay zero and the mask hides them
-            idx, B, T = pack
+            # rotate the real rows (cos/sin are already gathered per row), then causal SDPA per
+            # sequence on its own rows: the same attention as the base run's causal + padding
+            # mask, without the pad blocks it computes and without the [B, T] zero buffers
+            idx, B, T, lengths = pack
             q = rope.rotary(q, cos, sin, self.head_dim, dtype)
             k = rope.rotary(k, cos, sin, self.head_dim, dtype)
-            q, k, v = (packed.scatter_rows(t, idx, B * T).view(B, T, -1) for t in (q, k, v))
-            input_shape = (B, T)
-            hidden_shape = (*input_shape, -1, self.head_dim)
-            query_states = q.view(hidden_shape).transpose(1, 2)
-            key_states = k.view(hidden_shape).transpose(1, 2)
+            attn_output = packed.per_row_attention(q, k, v, lengths, self.head_dim,
+                                                   self.num_key_value_groups, self.scaling,
+                                                   self.attention_dropout if self.training else 0.0)
+            attn_output = self.o_proj(attn_output)
+            return attn_output, None
         elif fused_rope and cos.dim() == 3 and cos.shape[0] in (1, input_shape[0]) \
                 and cos.shape[1] == input_shape[1] and cos.shape[-1] == self.head_dim \
                 and self.head_dim % 2 == 0:
@@ -125,8 +135,6 @@ def patch_qwen2_attention(dtype=torch.float16, fused_rope=True):
             dropout=0.0 if not self.training else self.attention_dropout,
             scaling=self.scaling, sliding_window=self.sliding_window, **kwargs)
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
-        if pack is not None:
-            attn_output = packed.gather_rows(attn_output.reshape(B * T, -1), idx)
         attn_output = self.o_proj(attn_output)
         return attn_output, attn_weights
 

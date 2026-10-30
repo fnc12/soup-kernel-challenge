@@ -231,3 +231,38 @@ def test_rotary_matches_transformers(in_dtype, out_dtype, heads, cos_batch):
     out.backward(grad)
     torch.testing.assert_close(out.float(), ref.float(), rtol=2e-3, atol=2e-3)
     torch.testing.assert_close(x.grad.float(), ref_dx.float(), rtol=2e-3, atol=2e-3)
+
+
+def test_per_row_attention_matches_masked_sdpa():
+    from solution.packed import per_row_attention
+
+    torch.manual_seed(3)
+    B, T, Hq, Hkv, D = 3, 40, 12, 2, 128
+    lengths = [40, 17, 1]
+    mask = torch.zeros(B, T, dtype=torch.bool, device="cuda")
+    for i, L in enumerate(lengths):
+        mask[i, :L] = True
+    q = torch.randn(B, T, Hq * D, device="cuda", dtype=torch.float16, requires_grad=True)
+    k = torch.randn(B, T, Hkv * D, device="cuda", dtype=torch.float16, requires_grad=True)
+    v = torch.randn(B, T, Hkv * D, device="cuda", dtype=torch.float16, requires_grad=True)
+    grad = torch.randn(B, T, Hq * D, device="cuda", dtype=torch.float16)
+    # the base: causal + padding mask on the padded layout, keys/values repeated for GQA
+    causal = torch.tril(torch.ones(T, T, dtype=torch.bool, device="cuda"))
+    full = causal[None, None] & mask[:, None, None, :]
+    full = full | ~mask[:, None, :, None]  # pad queries attend to themselves to avoid NaN rows
+    qb = q.view(B, T, Hq, D).transpose(1, 2)
+    kb = k.view(B, T, Hkv, D).transpose(1, 2).repeat_interleave(Hq // Hkv, dim=1)
+    vb = v.view(B, T, Hkv, D).transpose(1, 2).repeat_interleave(Hq // Hkv, dim=1)
+    ref = torch.nn.functional.scaled_dot_product_attention(qb, kb, vb, attn_mask=full, scale=D ** -0.5)
+    ref = ref.transpose(1, 2).reshape(B, T, Hq * D)
+    (ref * grad)[mask].sum().backward()
+    ref_dq, ref_dk, ref_dv = q.grad.clone(), k.grad.clone(), v.grad.clone()
+    q.grad = k.grad = v.grad = None
+    idx = mask.reshape(-1).nonzero(as_tuple=True)[0]
+    gather = lambda t: t.reshape(B * T, -1).index_select(0, idx).unsqueeze(0)
+    out = per_row_attention(gather(q), gather(k), gather(v), lengths, D, Hq // Hkv, D ** -0.5, 0.0)
+    (out[0] * gather(grad)[0]).sum().backward()
+    torch.testing.assert_close(out[0], ref[mask], rtol=2e-3, atol=2e-3)
+    torch.testing.assert_close(q.grad[mask], ref_dq[mask], rtol=2e-2, atol=2e-2)
+    torch.testing.assert_close(k.grad[mask], ref_dk[mask], rtol=2e-2, atol=2e-2)
+    torch.testing.assert_close(v.grad[mask], ref_dv[mask], rtol=2e-2, atol=2e-2)

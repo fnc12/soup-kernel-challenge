@@ -15,7 +15,7 @@ import triton
 import triton.language as tl
 
 
-@triton.jit
+@triton.jit(do_not_specialize=["n_heads", "T", "stride_x", "stride_cb", "stride_ct", "stride_o"])
 def rope_kernel(x_ptr, cos_ptr, sin_ptr, out_ptr, n_heads, T, stride_x, stride_cb, stride_ct,
                 stride_o, HALF: tl.constexpr, HEADS: tl.constexpr, BACKWARD: tl.constexpr):
     """One program: one position (row = b * T + t), HEADS heads of 2 * HALF values each. cos/sin
@@ -52,7 +52,7 @@ def _launch(x, cos, sin, head_dim, backward, out_dtype):
         x2 = x2.contiguous()
     stride_cb = 0 if cos.shape[0] == 1 else cos.stride(0)
     out = torch.empty((B * T, width), dtype=out_dtype, device=x.device)
-    HEADS = min(8, triton.next_power_of_2(n_heads))
+    HEADS = 4  # one variant for q (12 heads) and k (2 heads): no extra compilation
     grid = (B * T, triton.cdiv(n_heads, HEADS))
     rope_kernel[grid](x2, cos, sin, out, n_heads, T, x2.stride(0), stride_cb, cos.stride(1),
                       out.stride(0), HALF=head_dim // 2, HEADS=HEADS, BACKWARD=backward,

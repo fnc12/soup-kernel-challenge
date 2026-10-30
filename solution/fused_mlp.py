@@ -21,7 +21,7 @@ import triton.language as tl
 ROWS, COLS = 32, 128
 
 
-@triton.jit
+@triton.jit(do_not_specialize=["R", "I", "stride_gu", "stride_h"])
 def swiglu_gated_kernel(gu_ptr, h_ptr, R, I, stride_gu, stride_h, ROWS: tl.constexpr,
                         COLS: tl.constexpr):
     """h[r, c] = silu(gu[r, c]) * gu[r, I + c] on a ROWS x COLS tile."""
@@ -36,7 +36,7 @@ def swiglu_gated_kernel(gu_ptr, h_ptr, R, I, stride_gu, stride_h, ROWS: tl.const
     tl.store(h_ptr + rows * stride_h + cols, h.to(h_ptr.dtype.element_ty), mask=inside)
 
 
-@triton.jit
+@triton.jit(do_not_specialize=["R", "I", "stride_dh", "stride_gu", "stride_dgu"])
 def swiglu_gated_bwd_kernel(dh_ptr, gu_ptr, dgu_ptr, R, I, stride_dh, stride_gu, stride_dgu,
                             ROWS: tl.constexpr, COLS: tl.constexpr):
     """dgu[r, c] = dh * u * d silu(g) / dg and dgu[r, I + c] = dh * silu(g), on a tile."""

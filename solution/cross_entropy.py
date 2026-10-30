@@ -27,7 +27,7 @@ IGNORE_INDEX = -100
 ROWS = 256  # positions per chunk: logits chunk = ROWS x V x 2 bytes (78 MB at V = 151,936)
 
 
-@triton.jit
+@triton.jit(do_not_specialize=["stride_l", "stride_g", "V"])
 def head_ce_kernel(logits_ptr, labels_ptr, grad_ptr, loss_ptr, entropy_ptr, hit_ptr,
                    stride_l, stride_g, V, IGNORE: tl.constexpr, BLOCK_V: tl.constexpr):
     """One program per row of the logits chunk: pass 1 finds the max and the sum of exponentials
@@ -193,7 +193,7 @@ def patch_qwen2_causal_lm(dtype=torch.float16):
         self.model._solution_pack = None
         full_shape = None
         if pack is not None:  # the decoder ran on the real rows only (solution/packed.py)
-            idx, B, T = pack
+            idx, B, T = pack[:3]
             full_shape = (B, T)
             shift_labels = shift_labels.reshape(-1).index_select(0, idx).unsqueeze(0)
         if num_items is None:
