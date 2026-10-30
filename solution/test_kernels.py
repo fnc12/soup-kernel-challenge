@@ -203,18 +203,20 @@ def test_mlp_recompute_matches_the_kept_path():
 @pytest.mark.parametrize("in_dtype,out_dtype", [(torch.float16, torch.float16),
                                                 (torch.float32, torch.float16)])
 @pytest.mark.parametrize("heads", [12, 2])
-def test_rotary_matches_transformers(in_dtype, out_dtype, heads):
+@pytest.mark.parametrize("cos_batch", [1, 2])
+def test_rotary_matches_transformers(in_dtype, out_dtype, heads, cos_batch):
     from transformers.models.qwen2.modeling_qwen2 import apply_rotary_pos_emb
 
     from solution.rope import rotary
 
     torch.manual_seed(0)
-    B, T, D = 2, 37, 64
+    B, T, D = 2, 37, 128
     x = torch.randn(B, T, heads * D, device="cuda", dtype=in_dtype, requires_grad=True)
     pos = torch.arange(T, device="cuda").float()
     inv = 1.0 / (10000 ** (torch.arange(0, D, 2, device="cuda").float() / D))
     freqs = torch.cat([pos[:, None] * inv[None, :]] * 2, dim=-1)
-    cos, sin = freqs.cos().expand(B, T, D).contiguous(), freqs.sin().expand(B, T, D).contiguous()
+    cos = freqs.cos().expand(cos_batch, T, D).contiguous()
+    sin = freqs.sin().expand(cos_batch, T, D).contiguous()
     grad = torch.randn(B, T, heads * D, device="cuda", dtype=out_dtype)
 
     q = x.view(B, T, heads, D).transpose(1, 2)

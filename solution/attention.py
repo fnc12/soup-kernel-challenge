@@ -82,8 +82,9 @@ def patch_qwen2_attention(dtype=torch.float16, fused_rope=True):
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
         cos, sin = position_embeddings
-        if fused_rope and cos.dim() == 3 and tuple(cos.shape[:2]) == tuple(input_shape) \
-                and cos.shape[-1] == self.head_dim and self.head_dim % 2 == 0:
+        if fused_rope and cos.dim() == 3 and cos.shape[0] in (1, input_shape[0]) \
+                and cos.shape[1] == input_shape[1] and cos.shape[-1] == self.head_dim \
+                and self.head_dim % 2 == 0:
             q = rope.rotary(q, cos, sin, self.head_dim, dtype)
             k = rope.rotary(k, cos, sin, self.head_dim, dtype)
             query_states = q.view(hidden_shape).transpose(1, 2)
