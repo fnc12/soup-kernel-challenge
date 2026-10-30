@@ -1,0 +1,229 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Soup Kernel Challenge · Solo AI Team</title>
+
+
+<style>
+:root { --bg: #0f1117; --fg: #e8e6e3; --dim: #9aa0a6; --acc: #ffb454; --acc2: #7ad0ff; --code: #161a24; }
+* { box-sizing: border-box; }
+body { margin: 0; background: #000; color: var(--fg); font-family: "Helvetica Neue", "DejaVu Sans", "Noto Sans", sans-serif; overflow: hidden; height: 100vh; }
+.slide { padding: 70px 100px; height: 1080px; display: flex; flex-direction: column; gap: 28px; }
+h1 { font-size: 64px; margin: 0; letter-spacing: -0.5px; }
+h1 small { display: block; font-size: 28px; color: var(--dim); font-weight: normal; margin-top: 10px; }
+h2 { font-size: 52px; margin: 0; }
+h2 .n { color: var(--acc); margin-right: 18px; }
+p, li { font-size: 34px; line-height: 1.35; margin: 0; }
+ul { margin: 0; padding-left: 44px; display: flex; flex-direction: column; gap: 14px; }
+.row { display: flex; gap: 48px; align-items: flex-start; }
+.col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 22px; }
+table { border-collapse: collapse; font-size: 34px; }
+th, td { padding: 12px 28px; text-align: left; border-bottom: 1px solid #2a2f3a; }
+th { color: var(--dim); font-weight: normal; font-size: 28px; }
+td.num { font-variant-numeric: tabular-nums; }
+.big { color: var(--acc); font-weight: bold; }
+pre { background: var(--code); border-radius: 14px; padding: 22px 26px; font-size: 20px;
+      line-height: 1.4; margin: 0; font-family: "DejaVu Sans Mono", monospace; overflow: hidden;
+      border-left: 6px solid var(--acc2); white-space: pre; max-height: 740px; width: 100%; }
+.col.code { flex: 0 0 900px; }
+.foot { margin-top: auto; color: var(--dim); font-size: 26px; display: flex; justify-content: space-between; }
+.bars { display: flex; flex-direction: column; gap: 18px; font-size: 30px; }
+.bar { display: flex; align-items: center; gap: 20px; }
+.bar b { width: 420px; text-align: right; font-weight: normal; color: var(--fg); }
+.bar i { display: block; height: 40px; background: var(--acc2); border-radius: 6px; }
+.bar.pad i { background: var(--acc); }
+.bar span { color: var(--dim); }
+.checks { font-size: 30px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px 50px; }
+.checks div::before { content: "✓ "; color: #7bd88f; }
+</style>
+<style>
+#stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+#frame { width: 1920px; height: 1080px; background: var(--bg); transform-origin: top left; position: absolute; top: 0; left: 0; }
+.slide { display: none; }
+.slide.on { display: flex; }
+#counter { position: fixed; right: 18px; bottom: 12px; color: #555; font-size: 14px; font-family: sans-serif; }
+#notes { position: fixed; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.92); color: #ddd; font: 22px/1.4 sans-serif; padding: 18px 40px; display: none; max-height: 40vh; overflow: auto; }
+body.notes #notes { display: block; }
+pre { font-family: Menlo, "DejaVu Sans Mono", monospace; }
+</style></head><body>
+<div id="stage"><div id="frame"><div class='slide' data-notes="Это решение команды Solo AI Team для Soup Kernel Challenge. Задача: soup train дообучает Qwen два с половиной на четыре бита с LoRA на казахских инструкциях на бесплатной Kaggle T4. База занимает около девяноста секунд и четырнадцать гигабайт памяти из пятнадцати. Наш результат на тех же скриптах организаторов: в полтора раза быстрее и в три раза меньше памяти, все десять проверок пройдены, качество адаптера то же.">
+<h1>Soup Kernel Challenge<small>Triton-кернелы для soup train на Kaggle T4 · Solo AI Team</small></h1>
+<div class='row'><div class='col'>
+<table>
+<tr><th></th><th>База Soup 0.77.0</th><th>Решение</th><th></th></tr>
+<tr><td>Вся команда soup train</td><td class='num'>87.6 с</td><td class='num'>57.3 с</td><td class='big'>1.53×</td></tr>
+<tr><td>Пик памяти GPU</td><td class='num'>14 345 МиБ</td><td class='num'>4 489 МиБ</td><td class='big'>3.20×</td></tr>
+<tr><td>Eval loss адаптера</td><td class='num'>2.04966</td><td class='num'>2.04965</td><td>-0.000%</td></tr>
+</table>
+<p>Qwen2.5-1.5B-Instruct · NF4 · LoRA r=16 · batch 4 × 512 · 64 шагов · один Tesla T4</p>
+<p>Скрипты организаторов, протокол жюри: два прогона на сторону, все 10 проверок пройдены.</p>
+</div></div><div class='foot'><span>Solo AI Team · Soup Kernel Challenge · Decentrathon 6.0</span><span></span></div></div><div class='slide' data-notes="Куда уходил шаг базы. Сорок четыре процента на поэлементные операции и приведения типов: bitsandbytes после каждого четырёхбитного матмула переводит результат обратно в fp32. Логиты по словарю в сто пятьдесят две тысячи токенов занимают гигабайты. И главное: батч добивается паддингом до самой длинной строки, а строки короткие, поэтому сорок два процента вычислений шли впустую.">
+<h2><span class='n'>1</span>Куда уходил шаг базы на T4</h2>
+<div class='row'><div class='col'>
+<div class='bars'>
+<div class='bar'><b>поэлементные операции и касты</b><i style='width:620px'></i><span>44%</span></div>
+<div class='bar'><b>матмулы</b><i style='width:510px'></i><span>36%</span></div>
+<div class='bar'><b>softmax по словарю 151 936</b><i style='width:100px'></i><span>7%</span></div>
+<div class='bar'><b>attention</b><i style='width:70px'></i><span>5%</span></div>
+<div class='bar'><b>распаковка NF4</b><i style='width:70px'></i><span>5%</span></div>
+<div class='bar pad'><b>паддинг в батчах</b><i style='width:590px'></i><span>42% позиций</span></div>
+</div>
+<ul>
+<li>bitsandbytes после каждого 4-битного матмула кастит результат обратно в fp32</li>
+<li>логиты 4 × 512 × 151 936: fp16, fp32-копия, log-softmax, ещё два прохода TRL и Soup</li>
+<li>батч добивается до самой длинной строки: средняя строка 207 токенов, максимум 512</li>
+</ul></div></div><div class='foot'><span>Solo AI Team · Soup Kernel Challenge · Decentrathon 6.0</span><span></span></div></div><div class='slide' data-notes="Что мы сделали, семь Triton-кернелов. Первый: слитый выходной слой с cross-entropy по кускам строк. Логиты целиком в памяти не появляются; один кернел за один проход по куску считает log-sum-exp, потерю, градиент, энтропию и точность, те самые колонки, которые логирует TRL и пишет rewind Soup.">
+<h2><span class='n'>2</span>Слитый выходной слой и cross-entropy по кускам</h2>
+<div class='row'><div class='col'>
+<ul>
+<li>матмул головы по 256 позиций, логиты куска живут только внутри куска</li>
+<li>один кернел за один проход: log-sum-exp, потеря, градиент логитов, энтропия, argmax</li>
+<li>градиент по hidden считается тут же: ни одного полного тензора логитов в памяти</li>
+<li>колонки entropy, accuracy, num_tokens и построчные потери rewind — те же формулы</li>
+</ul></div>
+<div class='col code'><pre>    row = tl.program_id(0)
+    label = tl.load(labels_ptr + row)
+    base = logits_ptr + row * stride_l
+    m = -float(&quot;inf&quot;)
+    s = 0.0
+    best = -float(&quot;inf&quot;)
+    best_idx = 0
+    for start in range(0, V, BLOCK_V):
+        cols = start + tl.arange(0, BLOCK_V)
+        mask = cols &lt; V
+        l = tl.load(base + cols, mask=mask, other=-float(&quot;inf&quot;)).to(tl.float32)
+        bm = tl.max(l, axis=0)
+        m_new = tl.maximum(m, bm)
+        s = s * tl.exp(m - m_new) + tl.sum(tl.exp(l - m_new), axis=0)
+        m = m_new
+        # the first index of the block maximum, kept only if it beats the running best
+        is_max = l == bm
+        cand = tl.min(tl.where(is_max, cols, V), axis=0)
+        best_idx = tl.where(bm &gt; best, cand, best_idx)
+        best = tl.maximum(best, bm)
+    lse = m + tl.log(s)
+    labelled = label != IGNORE</pre></div></div><div class='foot'><span>Solo AI Team · Soup Kernel Challenge · Decentrathon 6.0</span><span></span></div></div><div class='slide' data-notes="Второй: распаковка NF4 в один проход, оба уровня квантования сразу, и для прямого, и для обратного прохода. Веса q, k, v склеены в одну матрицу, gate и up тоже: одна распаковка и один GEMM вместо трёх узких.">
+<h2><span class='n'>3</span>Распаковка NF4 в один проход и склеенные веса</h2>
+<div class='row'><div class='col'>
+<ul>
+<li>bitsandbytes: два кернела на проекцию (absmax, веса) + cuBLAS, и так же в backward</li>
+<li>наш кернел: оба уровня квантования сразу, одна слитная запись fp16-строк</li>
+<li>q | k | v → одна матрица 2048 × 1536, gate | up → одна 17 920 × 1536</li>
+<li>одна распаковка и один GEMM вместо трёх узких; исходники освобождают память</li>
+</ul></div>
+<div class='col code'><pre>    pid = tl.program_id(0)
+    offs = pid * BYTES + tl.arange(0, BYTES)
+    mask = offs &lt; n_bytes
+    byte = tl.load(packed_ptr + offs, mask=mask, other=0).to(tl.int32)
+    hi = byte &gt;&gt; 4
+    lo = byte &amp; 15
+    # value index i = 2 * byte index (hi) and 2 * byte index + 1 (lo); its block is i // BLOCK
+    block = (offs * 2) // BLOCK
+    block2 = block // BLOCK2
+    code = tl.load(absmax_u8_ptr + block, mask=mask, other=0).to(tl.int32)
+    scale2 = tl.load(scale2_ptr + block2, mask=mask, other=0.0)
+    offset = tl.load(offset_ptr + block2, mask=mask, other=0.0)
+    absmax = tl.load(code_ptr + code, mask=mask, other=0.0) * scale2 + offset
+    v_hi = tl.load(nf4_ptr + hi, mask=mask, other=0.0) * absmax
+    v_lo = tl.load(nf4_ptr + lo, mask=mask, other=0.0) * absmax
+    # interleave (hi, lo) pairs into one contiguous run of 2 * BYTES values: one coalesced store
+    v = tl.reshape(tl.join(v_hi, v_lo), [BYTES * 2])
+    out_offs = pid * BYTES * 2 + tl.arange(0, BYTES * 2)</pre></div></div><div class='foot'><span>Solo AI Team · Soup Kernel Challenge · Decentrathon 6.0</span><span></span></div></div><div class='slide' data-notes="Дальше: двумерный SwiGLU поверх склеенного буфера, слитый RMSNorm с fp16 на выходе, RoPE одним кернелом. Активации между матмулами остаются в fp16, таблица эмбеддингов возвращена в fp16, в котором Soup её и загрузил.">
+<h2><span class='n'>4</span>SwiGLU, RMSNorm, RoPE, fp16 между матмулами</h2>
+<div class='row'><div class='col'>
+<ul>
+<li>двумерный SwiGLU поверх склеенного gate|up-буфера, backward пишет один [R, 2I]-градиент</li>
+<li>RMSNorm: fp32-статистика, fp16 на выходе, backward из входа и одного скаляра на строку</li>
+<li>RoPE для q и k одним кернелом в каждую сторону вместо цепочки из десяти операций</li>
+<li>активации остаются в fp16, residual-поток fp32; таблица эмбеддингов снова в fp16, в котором Soup её загрузил</li>
+</ul></div>
+<div class='col code'><pre>def rmsnorm_fwd_kernel(x_ptr, w_ptr, y_ptr, rstd_ptr, stride_x, stride_y, D, eps,
+                       BLOCK_D: tl.constexpr):
+    row = tl.program_id(0)
+    cols = tl.arange(0, BLOCK_D)
+    mask = cols &lt; D
+    x = tl.load(x_ptr + row * stride_x + cols, mask=mask, other=0.0).to(tl.float32)
+    var = tl.sum(x * x, axis=0) / D
+    rstd = 1.0 / tl.sqrt(var + eps)
+    tl.store(rstd_ptr + row, rstd)
+    w = tl.load(w_ptr + cols, mask=mask, other=0.0).to(tl.float32)
+    y = w * (x * rstd)
+    tl.store(y_ptr + row * stride_y + cols, y.to(y_ptr.dtype.element_ty), mask=mask)
+
+</pre></div></div><div class='foot'><span>Solo AI Team · Soup Kernel Challenge · Decentrathon 6.0</span><span></span></div></div><div class='slide' data-notes="И самое весомое по скорости: паддинг убран внутри батча. После эмбеддингов остаются только реальные токены, все слои считают по ним, а attention идёт по каждой строке отдельно, причинно, без маски и без блоков паддинга. Строки между батчами не смешиваются, маски dropout у LoRA те же, что у базы.">
+<h2><span class='n'>5</span>Паддинг убран внутри батча</h2>
+<div class='row'><div class='col'>
+<ul>
+<li>после эмбеддингов остаются только реальные токены: [1, N_real, D]</li>
+<li>нормы, проекции, LoRA, MLP и выходной слой считают по ним</li>
+<li>attention: причинный SDPA по каждой строке на её токенах, без маски и блоков паддинга</li>
+<li>строки между батчами не смешиваются; маски dropout у LoRA те же, что у базы</li>
+</ul></div>
+<div class='col code'><pre>def per_row_attention(q, k, v, lengths, head_dim, groups, scaling, dropout_p):
+    &quot;&quot;&quot;Causal SDPA of each sequence on its own rows. q, k, v: [1, N_real, heads * head_dim] pack
+    row-major by sequence; `lengths` the sequence lengths in order. Returns [1, N_real, Hq * D].
+    outs, start = [], 0
+    q2, k2, v2 = q[0], k[0], v[0]
+    for L in lengths:
+        if L == 0:
+            continue
+        stop = start + L
+        qi = q2[start:stop].view(1, L, -1, head_dim).transpose(1, 2)
+        ki = k2[start:stop].view(1, L, -1, head_dim).transpose(1, 2)
+        vi = v2[start:stop].view(1, L, -1, head_dim).transpose(1, 2)
+        if groups &gt; 1:  # the same as transformers&#x27; repeat_kv for grouped-query attention
+            ki = ki.repeat_interleave(groups, dim=1)
+            vi = vi.repeat_interleave(groups, dim=1)
+        oi = torch.nn.functional.scaled_dot_product_attention(qi, ki, vi, dropout_p=dropout_p,
+                                                              is_causal=L &gt; 1, scale=scaling)
+        outs.append(oi.transpose(1, 2).reshape(L, -1))
+        start = stop
+    return torch.cat(outs, dim=0).unsqueeze(0)</pre></div></div><div class='foot'><span>Solo AI Team · Soup Kernel Challenge · Decentrathon 6.0</span><span></span></div></div><div class='slide' data-notes="Замер по протоколу жюри, два прогона на сторону: база 88 секунд, решение 57, пик памяти 14345 мегабайт против 4489. Кривая потерь в пределах четырёх сотых процента от базы, eval loss совпадает. Переключатель пересчёта MLP даёт четырёхкратную экономию памяти ценой десяти процентов времени.">
+<h2><span class='n'>6</span>Замер по протоколу жюри</h2>
+<div class='row'><div class='col'>
+<table>
+<tr><th></th><th>База</th><th>Решение</th><th></th></tr>
+<tr><td>soup train, среднее двух прогонов</td><td class='num'>87.6 с</td><td class='num'>57.3 с</td><td class='big'>1.53×</td></tr>
+<tr><td>пик памяти, nvidia-smi</td><td class='num'>14 345 МиБ</td><td class='num'>4 489 МиБ</td><td class='big'>3.20×</td></tr>
+<tr><td>eval loss</td><td class='num'>2.04966</td><td class='num'>2.04965</td><td>-0.000%</td></tr>
+</table>
+<p>Кривая потерь: первый шаг в пределах 0.01%, в среднем 0.04%. Режим SOLUTION_RECOMPUTE=1: память 3.9×, время 1.4×.</p>
+<div class='checks'><div>все прогоны завершились</div><div>без готовых кернел-библиотек</div><div>свои @triton.jit работают в обучении</div><div>доля своих кернелов ≥ 5%</div><div>та же задача и выходы Soup</div><div>кривая потерь как у базы</div><div>качество: eval loss в допуске</div><div>не хуже базы по времени и памяти</div><div>чистый замер на T4</div><div>79 регрессионных тестов Soup</div></div>
+</div></div><div class='foot'><span>Solo AI Team · Soup Kernel Challenge · Decentrathon 6.0</span><span></span></div></div><div class='slide' data-notes="Что дальше: свой кернел attention по упакованным строкам и слитая распаковка с GEMM. Код, тесты каждого кернела и сырые результаты в репозитории. Спасибо.">
+<h2><span class='n'>7</span>Ограничения и что дальше</h2>
+<div class='row'><div class='col'>
+<ul>
+<li>attention остаётся на SDPA PyTorch, по строкам; свой кернел по упакованным строкам — следующий шаг</li>
+<li>распаковка NF4 отдельно от GEMM: слитый вариант должен обогнать cuBLAS на T4</li>
+<li>патчи рассчитаны на Qwen2 + NF4 (блоки 64, двойное квантование) + обычную LoRA PEFT</li>
+<li>в репозитории: код, тест каждого кернела против PyTorch и bitsandbytes, сырые результаты всех прогонов</li>
+</ul>
+<p>github.com/BAITC-Hacks/hack-a8ca734b-solo-ai-team</p>
+</div></div><div class='foot'><span>Solo AI Team · Soup Kernel Challenge · Decentrathon 6.0</span><span></span></div></div></div></div>
+<div id="counter"></div><div id="notes"></div>
+<script>
+const slides = [...document.querySelectorAll('.slide')];
+let i = Math.max(0, Math.min(slides.length - 1, parseInt(location.hash.slice(1) || '0', 10) || 0));
+function fit() {
+  const s = Math.min(innerWidth / 1920, innerHeight / 1080);
+  const f = document.getElementById('frame');
+  f.style.transform = `scale(${s})`;
+  f.style.left = ((innerWidth - 1920 * s) / 2) + 'px';
+  f.style.top = ((innerHeight - 1080 * s) / 2) + 'px';
+}
+function show(n) {
+  i = (n + slides.length) % slides.length;
+  slides.forEach((el, k) => el.classList.toggle('on', k === i));
+  document.getElementById('counter').textContent = (i + 1) + ' / ' + slides.length;
+  document.getElementById('notes').textContent = slides[i].dataset.notes;
+  history.replaceState(null, '', '#' + i);
+}
+addEventListener('resize', fit);
+addEventListener('click', e => show(e.clientX < innerWidth / 5 ? i - 1 : i + 1));
+addEventListener('keydown', e => {
+  if (['ArrowRight', ' ', 'PageDown', 'Enter'].includes(e.key)) { e.preventDefault(); show(i + 1); }
+  else if (['ArrowLeft', 'PageUp', 'Backspace'].includes(e.key)) { e.preventDefault(); show(i - 1); }
+  else if (e.key === 'n') document.body.classList.toggle('notes');
+  else if (e.key === 'f') document.documentElement.requestFullscreen && document.documentElement.requestFullscreen();
+  else if (e.key === 'Home') show(0);
+  else if (e.key === 'End') show(slides.length - 1);
+});
+fit(); show(i);
+</script></body></html>
