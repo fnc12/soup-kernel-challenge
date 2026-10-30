@@ -50,10 +50,10 @@ def patch_qwen2_attention(dtype=torch.float16):
     original = modeling_qwen2.Qwen2Attention.forward
 
     def merged(self, bases):
-        key = tuple(m.weight.data_ptr() for m in bases) + tuple(m.bias.data_ptr() for m in bases)
+        key = tuple(id(m.weight) for m in bases) + tuple(m.bias.data_ptr() for m in bases)
         cached = getattr(self, "_solution_qkv", None)
         if cached is None or getattr(self, "_solution_qkv_key", None) != key:
-            qw = quant.QuantWeight([m.weight for m in bases])
+            qw = quant.QuantWeight([m.weight for m in bases], release=True)
             bias = torch.cat([m.bias.detach() for m in bases]).to(dtype)
             cached = (qw, bias, [m.weight.quant_state.shape[0] for m in bases])
             self._solution_qkv, self._solution_qkv_key = cached, key

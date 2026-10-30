@@ -78,7 +78,7 @@ def supported(quant_state):
 class QuantWeight:
     """One dense [N, K] weight made of one or more bitsandbytes NF4 parameters stacked along N."""
 
-    def __init__(self, params):
+    def __init__(self, params, release=False):
         states = [p.quant_state for p in params]
         if not all(supported(s) for s in states):
             raise ValueError("unsupported quantization layout")
@@ -101,6 +101,12 @@ class QuantWeight:
             self.packed = torch.cat([p.data.view(-1) for p in params])
             self.absmax = torch.cat([s.absmax.view(-1) for s in states])
             self.scale2 = torch.cat([s.state2.absmax.float().view(-1) for s in states])
+            if release:
+                # the stacked copy is the only one read from now on: the originals give their
+                # storage back and keep only their shape (a zero-stride view of one byte)
+                for p, st in zip(params, states):
+                    p.data = torch.zeros((1, 1), dtype=p.data.dtype, device=p.device).expand_as(p.data)
+                    st.absmax = torch.zeros((1,), dtype=st.absmax.dtype, device=p.device).expand_as(st.absmax)
         self.offsets = torch.cat([torch.full((s.state2.absmax.numel(),), float(s.offset),
                                              dtype=torch.float32, device=self.device) for s in states])
         assert self.packed.numel() * 2 == self.N * self.K

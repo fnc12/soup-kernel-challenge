@@ -137,10 +137,10 @@ def patch_qwen2_mlp(dtype=torch.float16, recompute=False):
 
     def merged(self):
         gate, up = getattr(self, "gate_proj", None), getattr(self, "up_proj", None)
-        key = (gate.weight.data_ptr(), up.weight.data_ptr())
+        key = (id(gate.weight), id(up.weight))
         qw = getattr(self, "_solution_gu", None)
         if qw is None or getattr(self, "_solution_gu_key", None) != key:
-            qw = quant.QuantWeight([gate.weight, up.weight])
+            qw = quant.QuantWeight([gate.weight, up.weight], release=True)
             self._solution_gu, self._solution_gu_key = qw, key
         return qw
 
