@@ -9,12 +9,14 @@ passing, see `results/`):
 
 | | Base Soup 0.77.0 | This solution | Ratio |
 |---|---|---|---|
-| Whole `soup train` command | 90.4 s | 58.6 s | **1.54x** faster |
-| The 64 training steps | 55.2 s | 33.2 s | 1.66x |
-| Peak GPU memory (nvidia-smi) | 14,345 MiB | 4,841 MiB | **2.96x** less |
-| Held-out eval loss | 2.04965 | 2.04950 | -0.007% |
+| Whole `soup train` command (mean of 2 runs, order base, solution, solution, base) | 88.9 s | 59.1 s | **1.50x** faster |
+| Peak GPU memory (nvidia-smi, max of the runs) | 14,345 MiB | 4,841 MiB | **2.96x** less |
+| Held-out eval loss | 2.04966 | 2.04952 | -0.007% |
 | Loss curve vs base | | first step 0.01%, mean 0.04% | |
 | Own Triton kernels, share of training time | | 17.5% | |
+
+Single runs of the same code measured 1.54x (`results/t4-run3-packed`); the base's wall time on a
+T4 varied between 87.2 and 91.2 s across our runs.
 
 With `SOLUTION_RECOMPUTE=1` (the MLP's gate|up rebuilt in the backward pass) the same code
 measures 1.40x on time and 3.90x on memory (peak 3,681 MiB; `results/t4-run4-packed-recompute`).
@@ -122,8 +124,9 @@ Switches (environment variables, for ablations; all off by default except where 
 
 `results/` holds the raw `result.json`, `checks.json`, per-run `metrics.json` and a kernel profile
 of our Kaggle T4 runs: `t4-run1` (kernels only, 1.33x / 2.57x), `t4-run2-recompute` (1.18x / 3.74x),
-`t4-run3-packed` (padding removed: the table above), `t4-run4-packed-recompute` (the same code
-with `SOLUTION_RECOMPUTE=1`).
+`t4-run3-packed` (padding removed, one run each, with a kernel profile), `t4-run4-packed-recompute`
+(the same code with `SOLUTION_RECOMPUTE=1`), `t4-run5-packed-2repeats` (the jury's protocol, two
+runs per side: the table above).
 
 Limits and honest notes:
 
