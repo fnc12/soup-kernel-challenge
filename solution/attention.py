@@ -39,7 +39,11 @@ def _lora_add(module, x, part, pack=None):
                 xd = x * mask.to(x.dtype)
         else:
             xd = dropout(x)
-        part = part + b(a(xd)) * scaling
+        if getattr(b, "bias", None) is None and part.dim() == 3 and part.shape[0] == 1:
+            # lora_B, the scaling and the add in one addmm (autocast runs it in the compute dtype)
+            part = torch.addmm(part[0], a(xd)[0], b.weight.t(), alpha=scaling).unsqueeze(0)
+        else:
+            part = part + b(a(xd)) * scaling
     return part
 
 
