@@ -52,7 +52,7 @@ pre { background: var(--code); border-radius: 14px; padding: 22px 26px; font-siz
 """
 
 
-def slide(body, foot_left="Solo AI Team · Soup Kernel Challenge · Decentrathon 6.0", foot_right=""):
+def slide(body, foot_left="Студия Евгения Захарова · Soup Kernel Challenge · Decentrathon 6.0", foot_right=""):
     return f"<!doctype html><html><head>{CSS}</head><body><div class='slide'>{body}" \
            f"<div class='foot'><span>{foot_left}</span><span>{foot_right}</span></div></div></body></html>"
 
@@ -75,7 +75,7 @@ def build_scenes(n):
     speed, mem = r["speedup"], r["memory_ratio"]
     scenes = []
     scenes.append((slide(f"""
-<h1>Soup Kernel Challenge<small>Triton-кернелы для soup train на Kaggle T4 · Solo AI Team</small></h1>
+<h1>Soup Kernel Challenge<small>Triton-кернелы для soup train на Kaggle T4 · Студия Евгения Захарова</small></h1>
 <div class='row'><div class='col'>
 <table>
 <tr><th></th><th>База Soup 0.77.0</th><th>Решение</th><th></th></tr>
@@ -86,7 +86,7 @@ def build_scenes(n):
 <p>Qwen2.5-1.5B-Instruct · NF4 · LoRA r=16 · batch 4 × 512 · 64 шагов · один Tesla T4</p>
 <p>Скрипты организаторов, протокол жюри: два прогона на сторону, все 10 проверок пройдены.</p>
 </div></div>"""),
-        f"Это решение команды Solo AI Team для Soup Kernel Challenge. Задача: soup train дообучает "
+        f"Это решение Студии Евгения Захарова для Soup Kernel Challenge. Задача: soup train дообучает "
         f"Qwen два с половиной на четыре бита с LoRA на казахских инструкциях на бесплатной Kaggle T4. "
         f"База занимает около девяноста секунд и четырнадцать гигабайт памяти из пятнадцати. "
         f"Наш результат на тех же скриптах организаторов: в полтора раза быстрее и в три раза меньше памяти, "

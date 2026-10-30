@@ -43,8 +43,8 @@ pre { background: var(--code); border-radius: 14px; padding: 22px 26px; font-siz
 body.notes #notes { display: block; }
 pre { font-family: Menlo, "DejaVu Sans Mono", monospace; }
 </style></head><body>
-<div id="stage"><div id="frame"><div class='slide' data-notes="Это решение команды Solo AI Team для Soup Kernel Challenge. Задача: soup train дообучает Qwen два с половиной на четыре бита с LoRA на казахских инструкциях на бесплатной Kaggle T4. База занимает около девяноста секунд и четырнадцать гигабайт памяти из пятнадцати. Наш результат на тех же скриптах организаторов: в полтора раза быстрее и в три раза меньше памяти, все десять проверок пройдены, качество адаптера то же.">
-<h1>Soup Kernel Challenge<small>Triton-кернелы для soup train на Kaggle T4 · Solo AI Team</small></h1>
+<div id="stage"><div id="frame"><div class='slide' data-notes="Это решение Студии Евгения Захарова для Soup Kernel Challenge. Задача: soup train дообучает Qwen два с половиной на четыре бита с LoRA на казахских инструкциях на бесплатной Kaggle T4. База занимает около девяноста секунд и четырнадцать гигабайт памяти из пятнадцати. Наш результат на тех же скриптах организаторов: в полтора раза быстрее и в три раза меньше памяти, все десять проверок пройдены, качество адаптера то же.">
+<h1>Soup Kernel Challenge<small>Triton-кернелы для soup train на Kaggle T4 · Студия Евгения Захарова</small></h1>
 <div class='row'><div class='col'>
 <table>
 <tr><th></th><th>База Soup 0.77.0</th><th>Решение</th><th></th></tr>
@@ -54,7 +54,7 @@ pre { font-family: Menlo, "DejaVu Sans Mono", monospace; }
 </table>
 <p>Qwen2.5-1.5B-Instruct · NF4 · LoRA r=16 · batch 4 × 512 · 64 шагов · один Tesla T4</p>
 <p>Скрипты организаторов, протокол жюри: два прогона на сторону, все 10 проверок пройдены.</p>
-</div></div><div class='foot'><span>Solo AI Team · Soup Kernel Challenge · Decentrathon 6.0</span><span></span></div></div><div class='slide' data-notes="Куда уходил шаг базы. Сорок четыре процента на поэлементные операции и приведения типов: bitsandbytes после каждого четырёхбитного матмула переводит результат обратно в fp32. Логиты по словарю в сто пятьдесят две тысячи токенов занимают гигабайты. И главное: батч добивается паддингом до самой длинной строки, а строки короткие, поэтому сорок два процента вычислений шли впустую.">
+</div></div><div class='foot'><span>Студия Евгения Захарова · Soup Kernel Challenge · Decentrathon 6.0</span><span></span></div></div><div class='slide' data-notes="Куда уходил шаг базы. Сорок четыре процента на поэлементные операции и приведения типов: bitsandbytes после каждого четырёхбитного матмула переводит результат обратно в fp32. Логиты по словарю в сто пятьдесят две тысячи токенов занимают гигабайты. И главное: батч добивается паддингом до самой длинной строки, а строки короткие, поэтому сорок два процента вычислений шли впустую.">
 <h2><span class='n'>1</span>Куда уходил шаг базы на T4</h2>
 <div class='row'><div class='col'>
 <div class='bars'>
@@ -69,7 +69,7 @@ pre { font-family: Menlo, "DejaVu Sans Mono", monospace; }
 <li>bitsandbytes после каждого 4-битного матмула кастит результат обратно в fp32</li>
 <li>логиты 4 × 512 × 151 936: fp16, fp32-копия, log-softmax, ещё два прохода TRL и Soup</li>
 <li>батч добивается до самой длинной строки: средняя строка 207 токенов, максимум 512</li>
-</ul></div></div><div class='foot'><span>Solo AI Team · Soup Kernel Challenge · Decentrathon 6.0</span><span></span></div></div><div class='slide' data-notes="Что мы сделали, семь Triton-кернелов. Первый: слитый выходной слой с cross-entropy по кускам строк. Логиты целиком в памяти не появляются; один кернел за один проход по куску считает log-sum-exp, потерю, градиент, энтропию и точность, те самые колонки, которые логирует TRL и пишет rewind Soup.">
+</ul></div></div><div class='foot'><span>Студия Евгения Захарова · Soup Kernel Challenge · Decentrathon 6.0</span><span></span></div></div><div class='slide' data-notes="Что мы сделали, семь Triton-кернелов. Первый: слитый выходной слой с cross-entropy по кускам строк. Логиты целиком в памяти не появляются; один кернел за один проход по куску считает log-sum-exp, потерю, градиент, энтропию и точность, те самые колонки, которые логирует TRL и пишет rewind Soup.">
 <h2><span class='n'>2</span>Слитый выходной слой и cross-entropy по кускам</h2>
 <div class='row'><div class='col'>
 <ul>
@@ -99,7 +99,7 @@ pre { font-family: Menlo, "DejaVu Sans Mono", monospace; }
         best_idx = tl.where(bm &gt; best, cand, best_idx)
         best = tl.maximum(best, bm)
     lse = m + tl.log(s)
-    labelled = label != IGNORE</pre></div></div><div class='foot'><span>Solo AI Team · Soup Kernel Challenge · Decentrathon 6.0</span><span></span></div></div><div class='slide' data-notes="Второй: распаковка NF4 в один проход, оба уровня квантования сразу, и для прямого, и для обратного прохода. Веса q, k, v склеены в одну матрицу, gate и up тоже: одна распаковка и один GEMM вместо трёх узких.">
+    labelled = label != IGNORE</pre></div></div><div class='foot'><span>Студия Евгения Захарова · Soup Kernel Challenge · Decentrathon 6.0</span><span></span></div></div><div class='slide' data-notes="Второй: распаковка NF4 в один проход, оба уровня квантования сразу, и для прямого, и для обратного прохода. Веса q, k, v склеены в одну матрицу, gate и up тоже: одна распаковка и один GEMM вместо трёх узких.">
 <h2><span class='n'>3</span>Распаковка NF4 в один проход и склеенные веса</h2>
 <div class='row'><div class='col'>
 <ul>
@@ -125,7 +125,7 @@ pre { font-family: Menlo, "DejaVu Sans Mono", monospace; }
     v_lo = tl.load(nf4_ptr + lo, mask=mask, other=0.0) * absmax
     # interleave (hi, lo) pairs into one contiguous run of 2 * BYTES values: one coalesced store
     v = tl.reshape(tl.join(v_hi, v_lo), [BYTES * 2])
-    out_offs = pid * BYTES * 2 + tl.arange(0, BYTES * 2)</pre></div></div><div class='foot'><span>Solo AI Team · Soup Kernel Challenge · Decentrathon 6.0</span><span></span></div></div><div class='slide' data-notes="Дальше: двумерный SwiGLU поверх склеенного буфера, слитый RMSNorm с fp16 на выходе, RoPE одним кернелом. Активации между матмулами остаются в fp16, таблица эмбеддингов возвращена в fp16, в котором Soup её и загрузил.">
+    out_offs = pid * BYTES * 2 + tl.arange(0, BYTES * 2)</pre></div></div><div class='foot'><span>Студия Евгения Захарова · Soup Kernel Challenge · Decentrathon 6.0</span><span></span></div></div><div class='slide' data-notes="Дальше: двумерный SwiGLU поверх склеенного буфера, слитый RMSNorm с fp16 на выходе, RoPE одним кернелом. Активации между матмулами остаются в fp16, таблица эмбеддингов возвращена в fp16, в котором Soup её и загрузил.">
 <h2><span class='n'>4</span>SwiGLU, RMSNorm, RoPE, fp16 между матмулами</h2>
 <div class='row'><div class='col'>
 <ul>
@@ -147,7 +147,7 @@ pre { font-family: Menlo, "DejaVu Sans Mono", monospace; }
     y = w * (x * rstd)
     tl.store(y_ptr + row * stride_y + cols, y.to(y_ptr.dtype.element_ty), mask=mask)
 
-</pre></div></div><div class='foot'><span>Solo AI Team · Soup Kernel Challenge · Decentrathon 6.0</span><span></span></div></div><div class='slide' data-notes="И самое весомое по скорости: паддинг убран внутри батча. После эмбеддингов остаются только реальные токены, все слои считают по ним, а attention идёт по каждой строке отдельно, причинно, без маски и без блоков паддинга. Строки между батчами не смешиваются, маски dropout у LoRA те же, что у базы.">
+</pre></div></div><div class='foot'><span>Студия Евгения Захарова · Soup Kernel Challenge · Decentrathon 6.0</span><span></span></div></div><div class='slide' data-notes="И самое весомое по скорости: паддинг убран внутри батча. После эмбеддингов остаются только реальные токены, все слои считают по ним, а attention идёт по каждой строке отдельно, причинно, без маски и без блоков паддинга. Строки между батчами не смешиваются, маски dropout у LoRA те же, что у базы.">
 <h2><span class='n'>5</span>Паддинг убран внутри батча</h2>
 <div class='row'><div class='col'>
 <ul>
@@ -175,7 +175,7 @@ pre { font-family: Menlo, "DejaVu Sans Mono", monospace; }
                                                               is_causal=L &gt; 1, scale=scaling)
         outs.append(oi.transpose(1, 2).reshape(L, -1))
         start = stop
-    return torch.cat(outs, dim=0).unsqueeze(0)</pre></div></div><div class='foot'><span>Solo AI Team · Soup Kernel Challenge · Decentrathon 6.0</span><span></span></div></div><div class='slide' data-notes="Замер по протоколу жюри, два прогона на сторону: база 88 секунд, решение 57, пик памяти 14345 мегабайт против 4489. Кривая потерь в пределах четырёх сотых процента от базы, eval loss совпадает. Переключатель пересчёта MLP даёт четырёхкратную экономию памяти ценой десяти процентов времени.">
+    return torch.cat(outs, dim=0).unsqueeze(0)</pre></div></div><div class='foot'><span>Студия Евгения Захарова · Soup Kernel Challenge · Decentrathon 6.0</span><span></span></div></div><div class='slide' data-notes="Замер по протоколу жюри, два прогона на сторону: база 88 секунд, решение 57, пик памяти 14345 мегабайт против 4489. Кривая потерь в пределах четырёх сотых процента от базы, eval loss совпадает. Переключатель пересчёта MLP даёт четырёхкратную экономию памяти ценой десяти процентов времени.">
 <h2><span class='n'>6</span>Замер по протоколу жюри</h2>
 <div class='row'><div class='col'>
 <table>
@@ -186,7 +186,7 @@ pre { font-family: Menlo, "DejaVu Sans Mono", monospace; }
 </table>
 <p>Кривая потерь: первый шаг в пределах 0.01%, в среднем 0.04%. Режим SOLUTION_RECOMPUTE=1: память 3.9×, время 1.4×.</p>
 <div class='checks'><div>все прогоны завершились</div><div>без готовых кернел-библиотек</div><div>свои @triton.jit работают в обучении</div><div>доля своих кернелов ≥ 5%</div><div>та же задача и выходы Soup</div><div>кривая потерь как у базы</div><div>качество: eval loss в допуске</div><div>не хуже базы по времени и памяти</div><div>чистый замер на T4</div><div>79 регрессионных тестов Soup</div></div>
-</div></div><div class='foot'><span>Solo AI Team · Soup Kernel Challenge · Decentrathon 6.0</span><span></span></div></div><div class='slide' data-notes="Что дальше: свой кернел attention по упакованным строкам и слитая распаковка с GEMM. Код, тесты каждого кернела и сырые результаты в репозитории. Спасибо.">
+</div></div><div class='foot'><span>Студия Евгения Захарова · Soup Kernel Challenge · Decentrathon 6.0</span><span></span></div></div><div class='slide' data-notes="Что дальше: свой кернел attention по упакованным строкам и слитая распаковка с GEMM. Код, тесты каждого кернела и сырые результаты в репозитории. Спасибо.">
 <h2><span class='n'>7</span>Ограничения и что дальше</h2>
 <div class='row'><div class='col'>
 <ul>
@@ -196,7 +196,7 @@ pre { font-family: Menlo, "DejaVu Sans Mono", monospace; }
 <li>в репозитории: код, тест каждого кернела против PyTorch и bitsandbytes, сырые результаты всех прогонов</li>
 </ul>
 <p>github.com/BAITC-Hacks/hack-a8ca734b-solo-ai-team</p>
-</div></div><div class='foot'><span>Solo AI Team · Soup Kernel Challenge · Decentrathon 6.0</span><span></span></div></div></div></div>
+</div></div><div class='foot'><span>Студия Евгения Захарова · Soup Kernel Challenge · Decentrathon 6.0</span><span></span></div></div></div></div>
 <div id="counter"></div><div id="notes"></div>
 <script>
 const slides = [...document.querySelectorAll('.slide')];

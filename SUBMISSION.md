@@ -1,4 +1,4 @@
-# Submission: Solo AI Team
+# Submission: Студия Евгения Захарова
 
 ## Links
 - Repository, final commit: https://github.com/BAITC-Hacks/hack-a8ca734b-solo-ai-team/commit/<sha>

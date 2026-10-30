@@ -1,4 +1,4 @@
-# Soup Kernel Challenge: Solo AI Team
+# Soup Kernel Challenge: Студия Евгения Захарова
 
 Triton kernels that make `soup train` (Soup 0.77.0, Qwen2.5-1.5B-Instruct, NF4 + LoRA r=16,
 4 x 512 tokens, 64 steps) faster and much lighter on a free Kaggle T4, without changing what it
