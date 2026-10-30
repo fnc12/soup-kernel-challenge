@@ -266,3 +266,10 @@ def test_per_row_attention_matches_masked_sdpa():
     torch.testing.assert_close(q.grad[mask], ref_dq[mask], rtol=2e-2, atol=2e-2)
     torch.testing.assert_close(k.grad[mask], ref_dk[mask], rtol=2e-2, atol=2e-2)
     torch.testing.assert_close(v.grad[mask], ref_dv[mask], rtol=2e-2, atol=2e-2)
+
+
+def test_warmup_compiles_every_kernel():
+    from solution.lowprec import activation_dtype
+    from solution.warmup import _warm
+
+    _warm(activation_dtype())  # raises if any kernel fails to compile or launch

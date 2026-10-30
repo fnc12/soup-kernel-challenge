@@ -19,6 +19,8 @@
 - `bitsandbytes Linear4bit.forward` -> our NF4 unpacking kernel + cuBLAS, result left in fp16
                                        (solution/lowprec.py, solution/quant.py).
 
+A background thread compiles the kernels while Soup loads the model (solution/warmup.py).
+
 Every patch checks that it is looking at a real CUDA tensor / module and otherwise falls through
 to the original code, so Soup's regression tests (fake modules, CPU) run unchanged.
 """
@@ -63,6 +65,10 @@ def apply():
         patch_soup_setup(activation_dtype())
     if os.environ.get("SOLUTION_NO_MLP") != "1":
         patch_qwen2_mlp(activation_dtype(), recompute=os.environ.get("SOLUTION_RECOMPUTE") == "1")
+    if os.environ.get("SOLUTION_NO_WARMUP") != "1":
+        from .warmup import start as warmup_start
+
+        warmup_start(activation_dtype())  # compiles the kernels while Soup loads the model
     if os.environ.get("SOLUTION_NO_ATTN") != "1":
         patch_qwen2_attention(activation_dtype(), fused_rope=os.environ.get("SOLUTION_NO_ROPE") != "1")
         if os.environ.get("SOLUTION_NO_PACK") != "1" and os.environ.get("SOLUTION_NO_CE") != "1":
