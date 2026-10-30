@@ -2,7 +2,7 @@
 """Builds the demo video: slides (HTML -> PNG, headless Chrome), narration (silero TTS over HTTP),
 one mp4 (ffmpeg). Run on casablanca from the repository root:
 
-    python3 docs/make_video.py --out video --speaker ru_alexandr --numbers results/t4-run5-packed-2repeats/result.json
+    python3 docs/make_video.py --out video --speaker aidar --numbers results/t4-run5-packed-2repeats/result.json
 """
 
 import argparse
@@ -203,7 +203,30 @@ def build_scenes(n):
     return scenes
 
 
+_V4 = {}
+
+
 def tts(text, speaker, out_wav, url):
+    """Narration: silero v4_ru (native Russian voices aidar, baya, kseniya, xenia, eugene) loaded
+    through torch.hub when `url` is "v4_ru"; otherwise an HTTP silero service."""
+    if url == "v4_ru":
+        import torch
+
+        if "model" not in _V4:
+            model, _ = torch.hub.load("snakers4/silero-models", "silero_tts", language="ru",
+                                      speaker="v4_ru", trust_repo=True)
+            _V4["model"] = model
+        audio = _V4["model"].apply_tts(text=text, speaker=speaker, sample_rate=48000,
+                                       put_accent=True, put_yo=True)
+        import wave
+
+        pcm = (audio.clamp(-1, 1) * 32767).to(torch.int16).numpy().tobytes()
+        with wave.open(str(out_wav), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(48000)
+            w.writeframes(pcm)
+        return
     req = urllib.request.Request(url, data=json.dumps({"text": text, "speaker": speaker,
                                                        "sample_rate": 48000}).encode(),
                                  headers={"Content-Type": "application/json"})
@@ -220,8 +243,8 @@ def duration(path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="video")
-    ap.add_argument("--speaker", default="ru_alexandr")
-    ap.add_argument("--tts-url", default="http://127.0.0.1:11441/tts")
+    ap.add_argument("--speaker", default="aidar")
+    ap.add_argument("--tts-url", default="v4_ru", help='"v4_ru" (torch.hub) or a silero HTTP endpoint')
     ap.add_argument("--numbers", default="results/t4-run5-packed-2repeats/result.json")
     ap.add_argument("--chrome", default="google-chrome")
     ap.add_argument("--pad", type=float, default=0.8, help="seconds of silence after each scene")
