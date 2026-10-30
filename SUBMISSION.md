@@ -36,9 +36,9 @@ Ideas taken from other kernels, with links (we wrote the code ourselves):
 ## Results on Kaggle T4 (from `runs/result.json` and `runs/checks.json` of the notebook above)
 | | Base Soup | Ours | Ratio |
 |---|---|---|---|
-| Time of `soup train`, s (mean of 2 runs) | 87.6 | 57.3 | speedup 1.53x |
+| Time of `soup train`, s (mean of 2 runs) | 85.9 | 51.9 | speedup 1.65x |
 | Peak GPU memory, MiB | 14,345 | 4,489 | base/ours 3.20x |
-| Eval loss (public rows) | 2.04966 | 2.04965 | -0.000% vs base |
+| Eval loss (public rows) | 2.04968 | 2.04967 | -0.000% vs base |
 
 - [x] All 10 checks of `harness/check_rules.py` passed
 - [x] README.md rewritten for our solution: what we did, how to run it, results, limits
@@ -53,7 +53,7 @@ each kernel works, the merged weights and the padding-free decoder, results agai
   dequant-GEMM was not attempted (cuBLAS wins on a T4 for these shapes).
 - The patches target Qwen2 + NF4 (blocks of 64, double quantization) + PEFT's vanilla LoRA;
   other layouts fall through to the original code.
-- `SOLUTION_RECOMPUTE=1` trades time for memory: 1.39x / 4.47x instead of 1.53x / 3.20x by the
-  same protocol; the default keeps the faster configuration.
+- `SOLUTION_RECOMPUTE=1` trades time for memory: about 1.5x / 4.47x instead of 1.65x / 3.20x by
+  the same protocol; the default keeps the faster configuration.
 - Next: a Triton attention kernel over the packed rows, and the NF4 unpacking fused into the
   GEMM's operand load.

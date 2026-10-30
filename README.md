@@ -9,14 +9,15 @@ passing, see `results/`):
 
 | | Base Soup 0.77.0 | This solution | Ratio |
 |---|---|---|---|
-| Whole `soup train` command (mean of 2 runs, order base, solution, solution, base) | 87.6 s | 57.3 s | **1.53x** faster |
+| Whole `soup train` command (mean of 2 runs, order base, solution, solution, base) | 85.9 s | 51.9 s | **1.65x** faster |
 | Peak GPU memory (nvidia-smi, max of the runs) | 14,345 MiB | 4,489 MiB | **3.20x** less |
-| Held-out eval loss | 2.04966 | 2.04965 | -0.000% |
+| Held-out eval loss | 2.04968 | 2.04967 | -0.000% |
 | Loss curve vs base | | first step 0.03%, mean 0.04% | |
 | Own Triton kernels, share of training time | | 14.9% | |
 
-The base's wall time on a T4 varied between 85.0 and 91.2 s across our runs (the two runs of this
-measurement: 90.3 and 85.0 s; ours 56.7 and 58.0 s).
+The base's wall time on a T4 varied between 82.4 and 91.4 s across our runs (the two runs of this
+measurement: 89.3 and 82.4 s; ours 51.3 and 52.5 s); the previous revision, whose first step
+still paid the kernel compilation, measured 1.53x (`results/t4-run6-rowattn-2repeats`).
 
 With `SOLUTION_RECOMPUTE=1` (the MLP's gate|up rebuilt in the backward pass) the same code
 measures, by the same protocol, **1.39x** on time and **4.47x** on memory (peak 3,209 MiB,
@@ -83,6 +84,13 @@ classes, bitsandbytes' 4-bit linear, TRL's `compute_loss` and Soup's model setup
    elements by dtype), and gathered, so the masks are the base run's. This is the single largest
    speed-up.
 
+8. **Kernels compiled while the model loads** (`warmup.py`). Every run starts with an empty
+   Triton cache and on Kaggle's two CPU cores the first step paid about five seconds for the
+   compilation of our kernels. `apply()` runs before Soup loads the model, so a background
+   thread launches each kernel once on tiny tensors with the exact configuration training uses;
+   the first real launch finds the compiled kernel. The compilation still happens inside the
+   measured command, it just overlaps the model's load from disk.
+
 Accompanying changes (no kernels, but they are where much of the memory went):
 
 - **fp16 activations between the 4-bit matmuls** (`lowprec.py`). `prepare_model_for_kbit_training`
@@ -137,7 +145,8 @@ of our Kaggle T4 runs: `t4-run1` (kernels only, 1.33x / 2.57x), `t4-run2-recompu
 (the same code with `SOLUTION_RECOMPUTE=1`: 1.40x / 3.90x), `t4-run5-packed-2repeats` (the jury's
 protocol, two runs per side: 1.50x / 2.96x), `t4-run6-rowattn-2repeats` (attention per sequence on
 the packed rows, dropout masks as the base's: the table above), `t4-run7-recompute-final` (the
-same code with `SOLUTION_RECOMPUTE=1`, two runs per side).
+same code with `SOLUTION_RECOMPUTE=1`, two runs per side), `t4-run8-warmup-2repeats` (kernels
+compiled in the background while the model loads: the table above).
 
 Limits and honest notes:
 
