@@ -34,7 +34,7 @@ def patch_bnb_linear4bit(own_dequant=True):
         from bitsandbytes.nn import modules
     except Exception:  # noqa: BLE001 - no bitsandbytes (the regression tests): nothing to patch
         return False
-    from . import nf4
+    from . import quant
 
     cls = modules.Linear4bit
     original = cls.forward
@@ -52,8 +52,8 @@ def patch_bnb_linear4bit(own_dequant=True):
             self.compute_type_is_set = True
         if x.dtype != compute_dtype:
             x = x.to(compute_dtype)
-        if own_dequant and nf4.supported(quant_state) and x.shape[-1] == quant_state.shape[1]:
-            return nf4.quant_linear(x, self.weight, quant_state)
+        if own_dequant and quant.supported(quant_state) and x.shape[-1] == quant_state.shape[1]:
+            return quant.quant_linear(x, quant.quant_weight_of(self))
         return bnb.matmul_4bit(x, self.weight, bias=None, quant_state=quant_state)
 
     cls.forward = forward

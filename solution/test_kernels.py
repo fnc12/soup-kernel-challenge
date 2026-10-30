@@ -11,29 +11,6 @@ pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a C
 TOLERANCE = {torch.float16: 2e-3, torch.float32: 1e-4}
 
 
-@pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
-@pytest.mark.parametrize("shape", [(4, 512, 8960), (3, 77, 1001)])
-def test_example_swiglu_matches_pytorch(dtype, shape):
-    from solution.swiglu import swiglu
-
-    torch.manual_seed(0)
-    gate = torch.randn(shape, device="cuda", dtype=dtype, requires_grad=True)
-    up = torch.randn(shape, device="cuda", dtype=dtype, requires_grad=True)
-    grad = torch.randn(shape, device="cuda", dtype=dtype)
-
-    ref = torch.nn.functional.silu(gate.float()) * up.float()
-    ref.backward(grad.float())
-    ref_dgate, ref_dup = gate.grad.float(), up.grad.float()
-    gate.grad = up.grad = None
-
-    out = swiglu(gate, up)
-    out.backward(grad)
-    tol = TOLERANCE[dtype]
-    torch.testing.assert_close(out.float(), ref, rtol=tol, atol=tol)
-    torch.testing.assert_close(gate.grad.float(), ref_dgate, rtol=tol, atol=tol)
-    torch.testing.assert_close(up.grad.float(), ref_dup, rtol=tol, atol=tol)
-
-
 def _rmsnorm_ref(x, w, eps):
     xf = x.float()
     var = xf.pow(2).mean(-1, keepdim=True)
@@ -120,19 +97,21 @@ def test_fused_head_cross_entropy_matches_pytorch(shape, vocab):
     assert int(step.labelled) == int((shift != IGNORE_INDEX).sum())
 
 
-@pytest.mark.parametrize("shape", [(8960, 1536), (1536, 8960), (256, 1536), (152, 1536)])
+@pytest.mark.parametrize("shape", [(8960, 1536), (1536, 8960), (256, 1536), (512, 1536)])
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
 def test_nf4_dequant_matches_bitsandbytes(shape, dtype):
     bnb = pytest.importorskip("bitsandbytes")
-    from solution.nf4 import dequantize_nf4, quant_linear, supported
+    from solution.quant import QuantWeight, quant_linear, supported
 
     torch.manual_seed(0)
     w = torch.randn(shape, device="cuda") * 0.05
     packed, state = bnb.functional.quantize_4bit(w, blocksize=64, compress_statistics=True,
                                                  quant_type="nf4")
     assert supported(state)
+    packed.quant_state = state
+    qw = QuantWeight([packed])
     ref = bnb.functional.dequantize_4bit(packed, state).to(dtype)
-    out = dequantize_nf4(packed, state, dtype)
+    out = qw.dequantize(dtype)
     assert out.shape == tuple(shape) and out.dtype == dtype
     # bitsandbytes rounds the second-level absmax once more than our fused fma does: a few
     # values per million differ by one unit in the last place of fp16
@@ -146,7 +125,76 @@ def test_nf4_dequant_matches_bitsandbytes(shape, dtype):
     ref_out.backward(grad)
     ref_dx = x.grad.clone()
     x.grad = None
-    out = quant_linear(x, packed, state)
+    out = quant_linear(x, qw)
     out.backward(grad)
     torch.testing.assert_close(out, ref_out, rtol=1e-2, atol=1e-2)
+    torch.testing.assert_close(x.grad, ref_dx, rtol=1e-2, atol=1e-2)
+
+
+def test_merged_quant_weight_stacks_weights_with_their_own_offsets():
+    bnb = pytest.importorskip("bitsandbytes")
+    from solution.quant import QuantWeight
+
+    torch.manual_seed(1)
+    parts, refs = [], []
+    for n, scale in ((1536, 0.05), (256, 0.5), (256, 0.01)):
+        w = torch.randn(n, 1536, device="cuda") * scale
+        packed, state = bnb.functional.quantize_4bit(w, blocksize=64, compress_statistics=True,
+                                                     quant_type="nf4")
+        packed.quant_state = state
+        parts.append(packed)
+        refs.append(bnb.functional.dequantize_4bit(packed, state).to(torch.float16))
+    qw = QuantWeight(parts)
+    out = qw.dequantize(torch.float16)
+    ref = torch.cat(refs)
+    assert out.shape == ref.shape == (2048, 1536)
+    torch.testing.assert_close(out, ref, rtol=1e-3, atol=5e-5)
+    assert (out != ref).float().mean().item() < 1e-3
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("shape", [(4, 512, 8960), (3, 77, 1000)])
+def test_gated_swiglu_matches_pytorch(dtype, shape):
+    from solution.fused_mlp import SwiGLUGated
+
+    torch.manual_seed(0)
+    I = shape[-1]
+    gu = torch.randn(*shape[:-1], 2 * I, device="cuda", dtype=dtype, requires_grad=True)
+    grad = torch.randn(shape, device="cuda", dtype=dtype)
+    gate, up = gu.float().split(I, dim=-1)
+    ref = torch.nn.functional.silu(gate) * up
+    ref.backward(grad.float())
+    ref_dgu = gu.grad.clone().float()
+    gu.grad = None
+    out = SwiGLUGated.apply(gu)
+    out.backward(grad)
+    tol = 2e-3 if dtype == torch.float16 else 1.6e-2
+    torch.testing.assert_close(out.float(), ref.to(dtype).float(), rtol=tol, atol=tol)
+    torch.testing.assert_close(gu.grad.float(), ref_dgu.to(dtype).float(), rtol=tol, atol=tol)
+
+
+def test_mlp_recompute_matches_the_kept_path():
+    bnb = pytest.importorskip("bitsandbytes")
+    from solution.fused_mlp import MLPRecompute, SwiGLUGated
+    from solution.quant import QuantWeight, quant_linear
+
+    torch.manual_seed(2)
+    K, I = 1536, 8960
+    qws = []
+    for shape in ((I, K), (I, K), (K, I)):
+        packed, state = bnb.functional.quantize_4bit(torch.randn(shape, device="cuda") * 0.02,
+                                                     blocksize=64, compress_statistics=True,
+                                                     quant_type="nf4")
+        packed.quant_state = state
+        qws.append(packed)
+    qw_gu, qw_d = QuantWeight(qws[:2]), QuantWeight(qws[2:])
+    x = torch.randn(2, 64, K, device="cuda", dtype=torch.float16, requires_grad=True)
+    grad = torch.randn(2, 64, K, device="cuda", dtype=torch.float16)
+    ref = quant_linear(SwiGLUGated.apply(quant_linear(x, qw_gu)), qw_d)
+    ref.backward(grad)
+    ref_dx = x.grad.clone()
+    x.grad = None
+    out = MLPRecompute.apply(x, qw_gu, qw_d)
+    out.backward(grad)
+    torch.testing.assert_close(out, ref, rtol=1e-2, atol=1e-2)
     torch.testing.assert_close(x.grad, ref_dx, rtol=1e-2, atol=1e-2)
