@@ -9,18 +9,22 @@ passing, see `results/`):
 
 | | Base Soup 0.77.0 | This solution | Ratio |
 |---|---|---|---|
-| Whole `soup train` command (mean of 2 runs, order base, solution, solution, base) | 85.73 s | 53.65 s | **1.60x** faster |
-| Peak GPU memory (nvidia-smi, max of the runs) | 14,345 MiB | 3,553 MiB | **4.04x** less |
-| Held-out eval loss | 2.04967 | 2.04962 | -0.002% |
-| Loss curve vs base | | first step 0.03%, mean 0.01% | |
-| Own Triton kernels, share of training time | | 14.1% | |
+| Whole `soup train` command (mean of 2 runs, order base, solution, solution, base) | 80.14 s | 53.68 s | **1.49x** faster |
+| Peak GPU memory (nvidia-smi, max of the runs) | 14,345 MiB | 3,251 MiB | **4.41x** less |
+| Held-out eval loss | 2.04962 | 2.04968 | +0.003% |
+| Loss curve vs base | | first step 0.00%, mean 0.01% | |
+| Own Triton kernels, share of training time | | 14.4% | |
 
-`results/t4-run15-stream14-2repeats`: the first revision with the 4-bit weights streamed from host
-memory (section "What we did"); the same code with the weights resident on the GPU measured 1.63x /
-3.77x, 3,809 MiB (`results/t4-run14-default-2repeats`), the step time unchanged (0.437 s against
-0.449 s). The default configuration rebuilds the gate|up activations of the last 14 decoder layers
-in the backward pass (`SOLUTION_RECOMPUTE=14`); the same code with other counts, measured by the
-same protocol with the weights resident:
+`results/t4-run16-final-2repeats`, the final code (commit 9667db8). The same code one revision
+earlier measured 1.60x / 4.04x (`results/t4-run15-stream14-2repeats`): the solution's own wall time
+was the same in both sessions (53.65 s and 53.68 s), the base's wall time was 85.7 s in one and
+80.1 s in the other, and the ratio follows the base. Across all our T4 sessions the base took
+80–94 s for the same command, so a speedup read in one session carries about ±6%. With the 4-bit
+weights resident on the GPU instead of streamed (section "What we did") the same code measured
+1.63x / 3.77x, 3,809 MiB (`results/t4-run14-default-2repeats`), the step time unchanged. The
+default configuration rebuilds the gate|up activations of the last 14 decoder layers in the
+backward pass (`SOLUTION_RECOMPUTE=14`); the same code with other counts, measured by the same
+protocol with the weights resident:
 
 | `SOLUTION_RECOMPUTE` (layers rebuilt) | Time | Memory | Peak | Results folder |
 |---|---|---|---|---|

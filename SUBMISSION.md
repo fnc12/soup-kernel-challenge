@@ -38,9 +38,9 @@ Ideas taken from other kernels, with links (we wrote the code ourselves):
 ## Results on Kaggle T4 (from `runs/result.json` and `runs/checks.json` of the notebook above)
 | | Base Soup | Ours | Ratio |
 |---|---|---|---|
-| Time of `soup train`, s (mean of 2 runs) | 85.73 | 53.65 | speedup 1.60x |
-| Peak GPU memory, MiB | 14,345 | 3,553 | base/ours 4.04x |
-| Eval loss (public rows) | 2.04967 | 2.04962 | -0.002% vs base |
+| Time of `soup train`, s (mean of 2 runs) | 80.14 | 53.68 | speedup 1.49x |
+| Peak GPU memory, MiB | 14,345 | 3,251 | base/ours 4.41x |
+| Eval loss (public rows) | 2.04962 | 2.04968 | +0.003% vs base |
 
 - [x] All 10 checks of `harness/check_rules.py` passed
 - [x] README.md rewritten for our solution: what we did, how to run it, results, limits
