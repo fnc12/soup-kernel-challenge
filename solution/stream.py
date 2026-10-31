@@ -16,6 +16,22 @@ import threading
 
 import torch
 
+_STRESS = int(os.environ.get("SOLUTION_STRESS", "0"))
+_STRESS_GPU = int(os.environ.get("SOLUTION_STRESS_GPU", "0"))
+
+
+def _stress_gpu():
+    """Diagnostics: a spin kernel on the compute stream, so the GPU runs far behind the CPU."""
+    if _STRESS_GPU:
+        torch.cuda._sleep(_STRESS_GPU)
+
+
+def _stress():
+    """Diagnostics: a spin kernel on the current (copy) stream, so copies arrive late on purpose
+    and any ordering mistake shows on a fast card the way it would on a slow one."""
+    if _STRESS:
+        torch.cuda._sleep(_STRESS)
+
 
 class Ring:
     """One GPU buffer handed out region by region, like a ring. A region is written again only
@@ -105,6 +121,7 @@ class Streamer:
             self.stream.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(self.stream):
             packed.copy_(qw.packed_host, non_blocking=True)
+            _stress()
             absmax.copy_(qw.absmax_host, non_blocking=True)
             event = torch.cuda.Event()
             event.record(self.stream)
@@ -114,6 +131,7 @@ class Streamer:
 
     def fetch(self, qw):
         """The GPU copies of `qw` (ready on the current stream); prefetch what comes next."""
+        _stress_gpu()
         if self.ring is None and os.environ.get("SOLUTION_STREAM_RING") == "1":
             self.ring = Ring(self.ring_mb << 20, qw.device, self.stream)
         with self.lock:

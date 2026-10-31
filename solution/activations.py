@@ -16,6 +16,22 @@ import threading
 
 import torch
 
+_STRESS = int(os.environ.get("SOLUTION_STRESS", "0"))
+_STRESS_GPU = int(os.environ.get("SOLUTION_STRESS_GPU", "0"))
+
+
+def _stress_gpu():
+    """Diagnostics: a spin kernel on the compute stream, so the GPU runs far behind the CPU."""
+    if _STRESS_GPU:
+        torch.cuda._sleep(_STRESS_GPU)
+
+
+def _stress():
+    """Diagnostics: a spin kernel on the current (copy) stream, so copies arrive late on purpose
+    and any ordering mistake shows on a fast card the way it would on a slow one."""
+    if _STRESS:
+        torch.cuda._sleep(_STRESS)
+
 
 class Arena:
     """One pinned host buffer, handed out in order and reset once per step."""
@@ -90,6 +106,7 @@ class Offloader:
         # a strided view (attention's per-sequence slices, the rotated q/k) is copied as a dense
         # tensor and comes back dense: the backward functions take any layout
         nbytes = t.numel() * t.element_size()
+        _stress_gpu()
         with self.lock:
             host = self.arena.take(nbytes) if self.arena is not None else None
             if host is None:
@@ -112,6 +129,7 @@ class Offloader:
         current = torch.cuda.current_stream()
         with torch.cuda.stream(self.stream):
             self.stream.wait_stream(current)  # every queued tensor is complete on the compute stream
+            _stress()
             for rec in pending:
                 rec.host.view(rec.dtype).view(rec.shape).copy_(rec.src, non_blocking=True)
             event = torch.cuda.Event()
@@ -133,6 +151,7 @@ class Offloader:
             rec.gpu = torch.empty(rec.shape, dtype=rec.dtype, device=rec.device)  # cannot be one of these
         self.stream.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(self.stream):  # after the records' own D2H copies: same stream
+            _stress()
             for rec in recs:
                 rec.gpu.copy_(rec.host.view(rec.dtype).view(rec.shape), non_blocking=True)
             event = torch.cuda.Event()
@@ -149,6 +168,7 @@ class Offloader:
     def unpack(self, packed):
         if not isinstance(packed, Record):
             return packed
+        _stress_gpu()
         with self.lock:
             if self.pending:
                 self._flush()  # the backward has begun: every host copy is on its way

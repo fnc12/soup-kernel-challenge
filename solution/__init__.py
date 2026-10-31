@@ -31,7 +31,7 @@ to the original code, so Soup's regression tests (fake modules, CPU) run unchang
 import os
 
 _APPLIED = False
-DEFAULTS = {"SOLUTION_STREAM": "1", "SOLUTION_OFFLOAD": "1"}  # what runs without any environment variable
+DEFAULTS = {"SOLUTION_STREAM": "1", "SOLUTION_OFFLOAD": "0"}  # what runs without any environment variable; the activation offload is exact on our cards and wrong on a T4 (2026-10-31), so it stays a switch
 
 
 def setting(name):
