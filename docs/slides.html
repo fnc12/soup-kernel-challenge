@@ -48,9 +48,9 @@ pre { font-family: Menlo, "DejaVu Sans Mono", monospace; }
 <div class='row'><div class='col'>
 <table>
 <tr><th></th><th>База Soup 0.77.0</th><th>Решение</th><th></th></tr>
-<tr><td>Вся команда soup train</td><td class='num'>83.9 с</td><td class='num'>50.2 с</td><td class='big'>1.67×</td></tr>
-<tr><td>Пик памяти GPU</td><td class='num'>14 345 МиБ</td><td class='num'>3 809 МиБ</td><td class='big'>3.77×</td></tr>
-<tr><td>Eval loss адаптера</td><td class='num'>2.04965</td><td class='num'>2.04962</td><td>-0.001%</td></tr>
+<tr><td>Вся команда soup train (ноутбук жюри)</td><td class='num'>92.5 с</td><td class='num'>59.9 с</td><td class='big'>1.54×</td></tr>
+<tr><td>Пик памяти GPU</td><td class='num'>14 345 МиБ</td><td class='num'>3 273 МиБ</td><td class='big'>4.38×</td></tr>
+<tr><td>Eval loss адаптера</td><td class='num'>2.04963</td><td class='num'>2.04970</td><td>+0.003%</td></tr>
 </table>
 <p>Qwen2.5-1.5B-Instruct · NF4 · LoRA r=16 · batch 4 × 512 · 64 шагов · один Tesla T4</p>
 <p>Скрипты организаторов, протокол жюри: два прогона на сторону, все 10 проверок пройдены.</p>
@@ -135,6 +135,7 @@ pre { font-family: Menlo, "DejaVu Sans Mono", monospace; }
 <li>активации остаются в fp16, residual-поток fp32; таблица эмбеддингов снова в fp16, в котором Soup её загрузил</li>
 <li>кернелы компилируются в фоновом потоке, пока Soup грузит модель: первый шаг 0.9 с вместо 6 с</li>
 <li>gate|up последних 14 слоёв пересчитываются в backward: минус 0,7 ГБ, время не растёт</li>
+<li>4-битные веса слоёв ждут в закреплённой памяти хоста и приходят на GPU на слой раньше по отдельному CUDA-потоку: минус 0,65 ГБ, шаг тот же</li>
 </ul></div>
 <div class='col code'><pre>def rmsnorm_fwd_kernel(x_ptr, w_ptr, y_ptr, rstd_ptr, stride_x, stride_y, D, eps,
                        BLOCK_D: tl.constexpr):
@@ -182,11 +183,11 @@ pre { font-family: Menlo, "DejaVu Sans Mono", monospace; }
 <div class='row'><div class='col'>
 <table>
 <tr><th></th><th>База</th><th>Решение</th><th></th></tr>
-<tr><td>soup train, среднее двух прогонов</td><td class='num'>83.9 с</td><td class='num'>50.2 с</td><td class='big'>1.67×</td></tr>
-<tr><td>пик памяти, nvidia-smi</td><td class='num'>14 345 МиБ</td><td class='num'>3 809 МиБ</td><td class='big'>3.77×</td></tr>
-<tr><td>eval loss</td><td class='num'>2.04965</td><td class='num'>2.04962</td><td>-0.001%</td></tr>
+<tr><td>soup train, ноутбук жюри</td><td class='num'>92.5 с</td><td class='num'>59.9 с</td><td class='big'>1.54×</td></tr>
+<tr><td>пик памяти, nvidia-smi</td><td class='num'>14 345 МиБ</td><td class='num'>3 273 МиБ</td><td class='big'>4.38×</td></tr>
+<tr><td>eval loss</td><td class='num'>2.04963</td><td class='num'>2.04970</td><td>+0.003%</td></tr>
 </table>
-<p>Кривая потерь: первый шаг в пределах 0.03%, в среднем 0.04%. Пересчёт gate|up в 14 последних слоях бесплатен по времени; во всех 28: память 4.5× за 1.55×.</p>
+<p>Кривая потерь: первый шаг 0.00%, в среднем 0.01%. Два прогона на сторону в другой сессии: 1.49× / 4.41×. Стриминг весов и пересчёт gate|up в 14 последних слоях бесплатны по времени: шаг 0.42 с.</p>
 <div class='checks'><div>все прогоны завершились</div><div>без готовых кернел-библиотек</div><div>свои @triton.jit работают в обучении</div><div>доля своих кернелов ≥ 5%</div><div>та же задача и выходы Soup</div><div>кривая потерь как у базы</div><div>качество: eval loss в допуске</div><div>не хуже базы по времени и памяти</div><div>чистый замер на T4</div><div>79 регрессионных тестов Soup</div></div>
 </div></div><div class='foot'><span>Студия Евгения Захарова · Soup Kernel Challenge · Decentrathon 6.0</span><span></span></div></div><div class='slide' data-notes="Что дальше: свой кернел attention по упакованным строкам и слитая распаковка с GEMM. Код, тесты каждого кернела и сырые результаты в репозитории. Спасибо.">
 <h2><span class='n'>7</span>Ограничения и что дальше</h2>
