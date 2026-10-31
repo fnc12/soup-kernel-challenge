@@ -113,12 +113,12 @@ class Streamer:
         else:
             packed = absmax = None
         if packed is None or absmax is None:
-            # the buffers come from the compute stream's pool (one pool, one high-water mark); the
-            # copy stream first waits for everything queued on the compute stream, so a block freed
-            # there a moment ago is never written while the kernel that read it may still run
-            packed = torch.empty_like(qw.packed_host, device=qw.device) if packed is None else packed
-            absmax = torch.empty_like(qw.absmax_host, device=qw.device) if absmax is None else absmax
-            self.stream.wait_stream(torch.cuda.current_stream())
+            # the buffers come from the copy stream's own pool: a block is handed out again only
+            # once the stream that read it (record_stream below) is past that point, with no wait
+            # on the compute stream; measured on a T4 as the variant that keeps the step time
+            with torch.cuda.stream(self.stream):
+                packed = torch.empty_like(qw.packed_host, device=qw.device) if packed is None else packed
+                absmax = torch.empty_like(qw.absmax_host, device=qw.device) if absmax is None else absmax
         with torch.cuda.stream(self.stream):
             packed.copy_(qw.packed_host, non_blocking=True)
             _stress()
@@ -160,11 +160,12 @@ class Streamer:
         """After the dequantization kernel was launched: the buffers go back once it is done."""
         if os.environ.get("SOLUTION_STREAM_SYNC") == "1":
             torch.cuda.synchronize()
-        if self.ring is not None:
-            stream = torch.cuda.current_stream()
-            for t in (packed, absmax):
-                if self.ring.holds(t):
-                    self.ring.release(t.data_ptr(), stream)
+        stream = torch.cuda.current_stream()
+        for t in (packed, absmax):
+            if self.ring is not None and self.ring.holds(t):
+                self.ring.release(t.data_ptr(), stream)
+            else:
+                t.record_stream(stream)  # the copy stream's block is reused only after this kernel
         qw.gpu = qw.event = None
 
 

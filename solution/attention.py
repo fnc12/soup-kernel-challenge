@@ -58,7 +58,7 @@ def _vanilla(module):
     return not any(adapter in variants for adapter in module.active_adapters)
 
 
-_PADDED = __import__("os").environ.get("SOLUTION_ATTN", "padded") == "padded"
+_PADDED = __import__("os").environ.get("SOLUTION_ATTN", "rows") == "padded"  # per sequence by default: the T4-measured path
 
 
 def merged_qkv(module, bases, dtype=torch.float16):
