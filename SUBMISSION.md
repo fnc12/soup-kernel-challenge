@@ -42,6 +42,9 @@ Ideas taken from other kernels, with links (we wrote the code ourselves):
 | Peak GPU memory, MiB | 14,345 | 3,251 | base/ours 4.41x |
 | Eval loss (public rows) | 2.04962 | 2.04968 | +0.003% vs base |
 
+- Jury-template notebook run (one run per side): speedup 1.54x, memory 4.38x, +0.003% eval loss,
+  all checks passed (`results/t4-run17-jury-notebook`). Two-repeat run of the same commit:
+  https://www.kaggle.com/code/fnc123/soup-kc-measure?scriptVersionId=<version21>
 - [x] All 10 checks of `harness/check_rules.py` passed
 - [x] README.md rewritten for our solution: what we did, how to run it, results, limits
 
