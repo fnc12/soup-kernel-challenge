@@ -69,6 +69,13 @@ class Offloader:
             print(f"[solution-tl] offload step: {len(self.records)} tensors, {self.bytes_step >> 20} MiB"
                   f" to host, {self.kept >> 20} MiB kept", file=__import__("sys").stderr, flush=True)
         with self.lock:
+            # a guess of the last backward pass that was never asked for may still be arriving:
+            # its buffer goes back to the pool only after the copy, in stream order
+            current = torch.cuda.current_stream()
+            for rec in self.records:
+                if rec.gpu is not None and rec.event is not None:
+                    current.wait_event(rec.event)
+                    rec.gpu = None
             self.arena.top = 0
             self.records = []
             self.pending = []
@@ -122,11 +129,11 @@ class Offloader:
         recs = [r for r in recs if r.gpu is None and r.src is None]
         if not recs:
             return
+        for rec in recs:  # allocated before the wait: a block freed later on the compute stream
+            rec.gpu = torch.empty(rec.shape, dtype=rec.dtype, device=rec.device)  # cannot be one of these
         self.stream.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(self.stream):  # after the records' own D2H copies: same stream
             for rec in recs:
-                with torch.cuda.stream(torch.cuda.default_stream(rec.device)):
-                    rec.gpu = torch.empty(rec.shape, dtype=rec.dtype, device=rec.device)  # compute pool
                 rec.gpu.copy_(rec.host.view(rec.dtype).view(rec.shape), non_blocking=True)
             event = torch.cuda.Event()
             event.record(self.stream)

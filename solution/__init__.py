@@ -50,6 +50,21 @@ def apply():
     from .startup import mark
 
     mark("apply")
+    if os.environ.get("SOLUTION_FORCE_FP16") == "1":  # diagnostics: behave like a T4 on any card
+        try:
+            import sys
+
+            from soup_cli.utils import gpu as _gpu
+
+            _gpu.cuda_supports_bf16 = lambda: False
+            _gpu.bf16_fp16_flags = lambda device, allow_mps_bf16=False: ((False, True) if str(device).startswith("cuda") else (False, False))
+            for name, module in list(sys.modules.items()):
+                if module is not None and name.startswith("soup_cli"):
+                    for attr in ("cuda_supports_bf16", "bf16_fp16_flags"):
+                        if hasattr(module, attr) and module is not _gpu:
+                            setattr(module, attr, getattr(_gpu, attr))
+        except Exception as exc:  # noqa: BLE001
+            print(f"solution: fp16 not forced ({exc!r})")
     if os.environ.get("SOLUTION_DIAG_MEM") == "1":
         try:
             import torch

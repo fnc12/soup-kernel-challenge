@@ -91,11 +91,15 @@ class Streamer:
     def _issue(self, qw):
         if qw.gpu is not None:
             return
-        if self.ring is None:
-            self.ring = Ring(self.ring_mb << 20, qw.device, self.stream)
-        packed = self.ring.take(qw.packed_host.numel(), qw.packed_host.dtype, qw.packed_host.shape)
-        absmax = self.ring.take(qw.absmax_host.numel(), qw.absmax_host.dtype, qw.absmax_host.shape)
-        if packed is None or absmax is None:  # the ring is full: ordinary buffers, written after the queue drained
+        if self.ring is not None and os.environ.get("SOLUTION_STREAM_RING") == "1":
+            packed = self.ring.take(qw.packed_host.numel(), qw.packed_host.dtype, qw.packed_host.shape)
+            absmax = self.ring.take(qw.absmax_host.numel(), qw.absmax_host.dtype, qw.absmax_host.shape)
+        else:
+            packed = absmax = None
+        if packed is None or absmax is None:
+            # the buffers come from the compute stream's pool (one pool, one high-water mark); the
+            # copy stream first waits for everything queued on the compute stream, so a block freed
+            # there a moment ago is never written while the kernel that read it may still run
             packed = torch.empty_like(qw.packed_host, device=qw.device) if packed is None else packed
             absmax = torch.empty_like(qw.absmax_host, device=qw.device) if absmax is None else absmax
             self.stream.wait_stream(torch.cuda.current_stream())
@@ -110,6 +114,8 @@ class Streamer:
 
     def fetch(self, qw):
         """The GPU copies of `qw` (ready on the current stream); prefetch what comes next."""
+        if self.ring is None and os.environ.get("SOLUTION_STREAM_RING") == "1":
+            self.ring = Ring(self.ring_mb << 20, qw.device, self.stream)
         with self.lock:
             n = len(self.order)
             if self.recording:
@@ -136,10 +142,11 @@ class Streamer:
         """After the dequantization kernel was launched: the buffers go back once it is done."""
         if os.environ.get("SOLUTION_STREAM_SYNC") == "1":
             torch.cuda.synchronize()
-        stream = torch.cuda.current_stream()
-        for t in (packed, absmax):
-            if self.ring.holds(t):
-                self.ring.release(t.data_ptr(), stream)
+        if self.ring is not None:
+            stream = torch.cuda.current_stream()
+            for t in (packed, absmax):
+                if self.ring.holds(t):
+                    self.ring.release(t.data_ptr(), stream)
         qw.gpu = qw.event = None
 
 
