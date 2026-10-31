@@ -1,4 +1,4 @@
-"""Solo AI Team: Triton kernels for `soup train` on a Kaggle T4.
+"""Студия Евгения Захарова: Triton kernels for `soup train` on a Kaggle T4.
 
 `apply()` runs once, before Soup builds the model and the trainer. It patches, narrowly:
 
@@ -21,6 +21,8 @@
                                        (solution/lowprec.py, solution/quant.py).
 
 A background thread compiles the kernels while Soup loads the model (solution/warmup.py).
+With `SOLUTION_STREAM=1` the 4-bit weights wait in pinned host memory between uses and reach the
+GPU one layer ahead of their matmul (solution/stream.py).
 
 Every patch checks that it is looking at a real CUDA tensor / module and otherwise falls through
 to the original code, so Soup's regression tests (fake modules, CPU) run unchanged.
@@ -29,6 +31,11 @@ to the original code, so Soup's regression tests (fake modules, CPU) run unchang
 import os
 
 _APPLIED = False
+DEFAULTS = {"SOLUTION_STREAM": "1", "SOLUTION_OFFLOAD": "1"}  # what runs without any environment variable
+
+
+def setting(name):
+    return os.environ.get(name, DEFAULTS.get(name, "0"))
 
 
 def apply():
@@ -40,6 +47,25 @@ def apply():
         import torch  # noqa: F401
     except Exception:  # noqa: BLE001
         return
+    from .startup import mark
+
+    mark("apply")
+    if os.environ.get("SOLUTION_DIAG_MEM") == "1":
+        try:
+            import torch
+
+            torch.cuda.memory._record_memory_history(max_entries=20000)
+        except Exception:  # noqa: BLE001
+            pass
+    if os.environ.get("SOLUTION_NO_STARTUP") != "1":
+        from .startup import cache_package_versions, datasets_caching_off
+
+        try:
+            if os.environ.get("SOLUTION_PACKAGE_CACHE") == "1":
+                cache_package_versions()  # measured on a T4: the walk itself costs more than it saves
+            datasets_caching_off()
+        except Exception as exc:  # noqa: BLE001
+            print(f"solution: start-up shortcuts off ({exc!r})")
     try:
         from .rmsnorm import patch_qwen2_rmsnorm
         from .cross_entropy import patch_qwen2_causal_lm, patch_sft_trainer
@@ -55,11 +81,44 @@ def apply():
         return
     from .lowprec import activation_dtype
 
+    mark("imports")
+    if os.environ.get("SOLUTION_NO_STARTUP") != "1":
+        try:
+            from .startup import patch_allocator_warmup, patch_kbit_upcast, patch_loader_cast
+
+            patch_kbit_upcast()
+            patch_loader_cast()
+            patch_allocator_warmup()
+        except Exception as exc:  # noqa: BLE001
+            print(f"solution: k-bit upcast left on the GPU ({exc!r})")
     if os.environ.get("SOLUTION_NO_RMSNORM") != "1":
         patch_qwen2_rmsnorm(activation_dtype())
     if os.environ.get("SOLUTION_NO_CE") != "1":
         patch_qwen2_causal_lm(activation_dtype())
         patch_sft_trainer()
+    if setting("SOLUTION_STREAM") == "1":
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                from . import quant
+                from .stream import Streamer
+
+                quant.STREAMER = Streamer(ahead=int(os.environ.get("SOLUTION_STREAM_AHEAD", "4")),
+                                          ring_mb=int(os.environ.get("SOLUTION_STREAM_RING_MB", "64")))
+                if os.environ.get("SOLUTION_STREAM_LOAD") != "0":
+                    from .stream import patch_load
+
+                    patch_load()  # the weights leave the GPU as the model loads
+        except Exception as exc:  # noqa: BLE001
+            print(f"solution: weight streaming off ({exc!r})")
+    if setting("SOLUTION_OFFLOAD") == "1":
+        try:
+            from .activations import start as offload_start
+
+            offload_start()  # saved activations wait in pinned host memory
+        except Exception as exc:  # noqa: BLE001
+            print(f"solution: activation offload off ({exc!r})")
     if os.environ.get("SOLUTION_NO_LOWPREC") != "1":
         patch_bnb_linear4bit(own_dequant=os.environ.get("SOLUTION_NO_NF4") != "1")
     if os.environ.get("SOLUTION_NO_EMBED") != "1":
@@ -75,3 +134,4 @@ def apply():
         patch_qwen2_attention(activation_dtype(), fused_rope=os.environ.get("SOLUTION_NO_ROPE") != "1")
         if os.environ.get("SOLUTION_NO_PACK") != "1" and os.environ.get("SOLUTION_NO_CE") != "1":
             patch_qwen2_model()  # padding removed inside the batch; needs the attention and head patches
+    mark("applied")

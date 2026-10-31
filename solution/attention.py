@@ -58,6 +58,23 @@ def _vanilla(module):
     return not any(adapter in variants for adapter in module.active_adapters)
 
 
+_PADDED = __import__("os").environ.get("SOLUTION_ATTN", "padded") == "padded"
+
+
+def merged_qkv(module, bases, dtype=torch.float16):
+    """The cached merged q|k|v QuantWeight, bias and row sizes of one attention module."""
+    from . import quant
+
+    key = tuple(id(m.weight) for m in bases) + tuple(m.bias.data_ptr() for m in bases)
+    cached = getattr(module, "_solution_qkv", None)
+    if cached is None or getattr(module, "_solution_qkv_key", None) != key:
+        qw = quant.QuantWeight([m.weight for m in bases], release=True)
+        bias = torch.cat([m.bias.detach() for m in bases]).to(dtype)
+        cached = (qw, bias, [m.weight.quant_state.shape[0] for m in bases])
+        module._solution_qkv, module._solution_qkv_key = cached, key
+    return cached
+
+
 def patch_qwen2_attention(dtype=torch.float16, fused_rope=True):
     from transformers.models.qwen2 import modeling_qwen2
 
@@ -71,14 +88,7 @@ def patch_qwen2_attention(dtype=torch.float16, fused_rope=True):
     original = modeling_qwen2.Qwen2Attention.forward
 
     def merged(self, bases):
-        key = tuple(id(m.weight) for m in bases) + tuple(m.bias.data_ptr() for m in bases)
-        cached = getattr(self, "_solution_qkv", None)
-        if cached is None or getattr(self, "_solution_qkv_key", None) != key:
-            qw = quant.QuantWeight([m.weight for m in bases], release=True)
-            bias = torch.cat([m.bias.detach() for m in bases]).to(dtype)
-            cached = (qw, bias, [m.weight.quant_state.shape[0] for m in bases])
-            self._solution_qkv, self._solution_qkv_key = cached, key
-        return cached
+        return merged_qkv(self, bases, dtype)
 
     def forward(self, hidden_states, position_embeddings, attention_mask, past_key_values=None,
                 **kwargs):
@@ -112,9 +122,14 @@ def patch_qwen2_attention(dtype=torch.float16, fused_rope=True):
             idx, B, T, lengths = pack
             q = rope.rotary(q, cos, sin, self.head_dim, dtype)
             k = rope.rotary(k, cos, sin, self.head_dim, dtype)
-            attn_output = packed.per_row_attention(q, k, v, lengths, self.head_dim,
-                                                   self.num_key_value_groups, self.scaling,
-                                                   self.attention_dropout if self.training else 0.0)
+            dropout_p = self.attention_dropout if self.training else 0.0
+            if _PADDED and not dropout_p and packed._right_padded(idx, B, T, lengths):
+                attn_output = packed.padded_attention(q, k, v, pack, self.head_dim,
+                                                      self.num_key_value_groups, self.scaling)
+            else:
+                attn_output = packed.per_row_attention(q, k, v, lengths, self.head_dim,
+                                                       self.num_key_value_groups, self.scaling,
+                                                       dropout_p)
             attn_output = self.o_proj(attn_output)
             return attn_output, None
         elif fused_rope and cos.dim() == 3 and cos.shape[0] in (1, input_shape[0]) \

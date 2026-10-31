@@ -152,6 +152,19 @@ def register_layers(model):
     return len(layers)
 
 
+def merged_gu(mlp):
+    """The cached merged gate|up QuantWeight of one MLP module."""
+    from . import quant
+
+    gate, up = getattr(mlp, "gate_proj", None), getattr(mlp, "up_proj", None)
+    key = (id(gate.weight), id(up.weight))
+    qw = getattr(mlp, "_solution_gu", None)
+    if qw is None or getattr(mlp, "_solution_gu_key", None) != key:
+        qw = quant.QuantWeight([gate.weight, up.weight], release=True)
+        mlp._solution_gu, mlp._solution_gu_key = qw, key
+    return qw
+
+
 def patch_qwen2_mlp(dtype=torch.float16, recompute=0):
     """`recompute`: how many decoder layers (counted from the last one) rebuild their gate|up
     activations in the backward pass instead of keeping them; 0 keeps everything."""
@@ -166,14 +179,7 @@ def patch_qwen2_mlp(dtype=torch.float16, recompute=0):
 
     original = modeling_qwen2.Qwen2MLP.forward
 
-    def merged(self):
-        gate, up = getattr(self, "gate_proj", None), getattr(self, "up_proj", None)
-        key = (id(gate.weight), id(up.weight))
-        qw = getattr(self, "_solution_gu", None)
-        if qw is None or getattr(self, "_solution_gu_key", None) != key:
-            qw = quant.QuantWeight([gate.weight, up.weight], release=True)
-            self._solution_gu, self._solution_gu_key = qw, key
-        return qw
+    merged = merged_gu
 
     def forward(self, x):
         if not hasattr(self, "_solution_recompute"):

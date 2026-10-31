@@ -14,11 +14,16 @@ The LoRA dropout masks are drawn on fp32 ones of the padded [B, T, D] shape, as 
 them on its fp32 norm output, and gathered: the same random stream, the same masks.
 """
 
+import contextlib
+import os
+
 import torch
 
 
 def patch_qwen2_model():
     from transformers.models.qwen2 import modeling_qwen2
+
+    from . import activations
     from transformers.modeling_outputs import BaseModelOutputWithPast
 
     original = modeling_qwen2.Qwen2Model.forward
@@ -34,6 +39,14 @@ def patch_qwen2_model():
             return original(self, input_ids=input_ids, attention_mask=attention_mask,
                             position_ids=position_ids, past_key_values=past_key_values,
                             inputs_embeds=inputs_embeds, use_cache=use_cache, **kwargs)
+        calls = getattr(self, "_solution_calls", 0)
+        if calls < 2:
+            from .startup import mark
+
+            mark(f"forward-{calls}")
+            self._solution_calls = calls + 1
+            if calls == 0 and os.environ.get("SOLUTION_DIAG_MEM") == "1":
+                _peak_watch()
         emb = self.embed_tokens(input_ids)
         B, T, D = emb.shape
         pos = torch.arange(T, device=emb.device).unsqueeze(0)
@@ -46,11 +59,18 @@ def patch_qwen2_model():
                      sin[0].index_select(0, tpos).unsqueeze(0))
         lengths = attention_mask.sum(dim=1).tolist()  # one host sync per step, before the layers
         pack = (idx, B, T, lengths)
-        for decoder_layer in self.layers[: self.config.num_hidden_layers]:
-            hidden = decoder_layer(hidden, attention_mask=causal, position_embeddings=packed_pe,
-                                   position_ids=pos, past_key_values=None, use_cache=False,
-                                   pack=pack, **kwargs)
-        hidden = self.norm(hidden)
+        off = activations.ACTIVE if torch.is_grad_enabled() else None
+        if off is not None:
+            off.new_step()
+            hooks = torch.autograd.graph.saved_tensors_hooks(off.pack, off.unpack)
+        else:
+            hooks = contextlib.nullcontext()
+        with hooks:
+            for decoder_layer in self.layers[: self.config.num_hidden_layers]:
+                hidden = decoder_layer(hidden, attention_mask=causal, position_embeddings=packed_pe,
+                                       position_ids=pos, past_key_values=None, use_cache=False,
+                                       pack=pack, **kwargs)
+            hidden = self.norm(hidden)
         self._solution_pack = pack
         return BaseModelOutputWithPast(last_hidden_state=hidden, past_key_values=None)
 
@@ -88,3 +108,108 @@ def scatter_rows(x, idx, rows):
 def gather_rows(x, idx):
     """[rows, W] -> [1, N_real, W]."""
     return x.index_select(0, idx).unsqueeze(0)
+
+
+_PEAK = {"mib": 0, "blocks": None, "thread": None}
+
+
+def _peak_watch():
+    """Diagnostics: a thread that keeps the block list of the highest allocation seen."""
+    import threading
+    import time
+
+    def run():
+        while True:
+            try:
+                mib = torch.cuda.memory_allocated() >> 20
+                if mib > _PEAK["mib"] + 40:
+                    _PEAK["mib"] = mib
+                    _PEAK["blocks"] = _largest_blocks(collect=True)
+            except Exception:  # noqa: BLE001
+                pass
+            time.sleep(0.0005)
+
+    if _PEAK["thread"] is None:
+        _PEAK["thread"] = threading.Thread(target=run, daemon=True)
+        _PEAK["thread"].start()
+        import atexit
+        import sys
+
+        def report():
+            print(f"[solution-diag] highest sampled allocation {_PEAK['mib']} MiB", file=sys.stderr)
+            for line in _PEAK["blocks"] or []:
+                print(f"[solution-diag] {line}", file=sys.stderr)
+
+        atexit.register(report)
+
+
+def _largest_blocks(collect=False):
+    import sys
+
+    try:
+        snap = torch.cuda.memory_snapshot()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[solution-diag] no snapshot ({exc!r})", file=sys.stderr)
+        return []
+    blocks = []
+    for seg in snap:
+        for b in seg.get("blocks", []):
+            if b.get("state") == "active_allocated":
+                frames = [f for f in (b.get("frames") or []) if str(f.get("filename", "")).endswith(".py")]
+                where = "; ".join(f"{f.get('filename','?').split('/')[-1]}:{f.get('line','?')} {f.get('name','?')}"
+                                  for f in frames[:5])
+                blocks.append((b.get("size", 0), seg.get("stream", 0), where))
+    blocks.sort(reverse=True)
+    by_where = {}
+    for size, stream, where in blocks:
+        key = where.split("; ")[0] if where else "?"
+        by_where[key] = by_where.get(key, 0) + size
+    agg = sorted(by_where.items(), key=lambda kv: -kv[1])[:14]
+    lines = [f"{size >> 20} MiB: {where}" for size, stream, where in blocks[:10]]
+    lines += [f"SUM {size >> 20} MiB ({len(blocks)} blocks total) <- {key}" for key, size in agg]
+    if collect:
+        return lines
+    for line in lines:
+        print(f"[solution-diag] {line}", file=sys.stderr)
+    return lines
+
+
+_RIGHT = {}
+
+
+def _right_padded(idx, B, T, lengths):
+    """True when every sequence's real tokens are a prefix of its row (right padding): then a
+    causal kernel alone keeps each real query on its own sequence's earlier keys."""
+    key = (id(lengths), B, T)
+    right = _RIGHT.get(key)
+    if right is None:
+        starts, s = [], 0
+        for L in lengths:
+            starts.append(s)
+            s += L
+        first = idx[torch.tensor([st for st, L in zip(starts, lengths) if L > 0], device=idx.device)]
+        rows = torch.tensor([b for b, L in enumerate(lengths) if L > 0], device=idx.device)
+        right = bool((first == rows * T).all().item())
+        _RIGHT.clear()
+        _RIGHT[key] = right
+    return right
+
+
+def padded_attention(q, k, v, pack, head_dim, groups, scaling):
+    """Causal SDPA of the whole batch in one call: the packed rows are scattered to [B, T] (pads
+    zero at the end of each row), the causal kernel keeps each real query on its own sequence's
+    earlier keys (a padded query row sees pads too, its output is dropped), the outputs come back
+    packed. The same attention as `per_row_attention` for every real row, with one kernel per
+    layer instead of one per sequence, and four saved tensors per layer that fit the offload
+    threshold. Needs right padding; `per_row_attention` serves the other case."""
+    idx, B, T, lengths = pack
+    rows = B * T
+    qp = scatter_rows(q[0], idx, rows).view(B, T, -1, head_dim).transpose(1, 2)
+    kp = scatter_rows(k[0], idx, rows).view(B, T, -1, head_dim).transpose(1, 2)
+    vp = scatter_rows(v[0], idx, rows).view(B, T, -1, head_dim).transpose(1, 2)
+    if groups > 1:
+        kp = kp.repeat_interleave(groups, dim=1)
+        vp = vp.repeat_interleave(groups, dim=1)
+    out = torch.nn.functional.scaled_dot_product_attention(qp, kp, vp, is_causal=True, scale=scaling)
+    out = out.transpose(1, 2).reshape(rows, -1)
+    return gather_rows(out, idx).reshape(1, idx.numel(), -1)

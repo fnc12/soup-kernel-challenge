@@ -11,6 +11,8 @@ before, and lets the fused head (solution/cross_entropy.py) read the table direc
 making its own fp16 copy. The adapter, the loss and every logged number stay the same.
 """
 
+import os
+
 import torch
 
 
@@ -53,7 +55,11 @@ def patch_soup_setup(dtype):
         return False
 
     def _setup_transformers(self, cfg, tcfg):
+        from .startup import mark
+
+        mark("setup-begin")
         result = original(self, cfg, tcfg)
+        mark("model-built")
         model = getattr(self, "model", None)
         if isinstance(model, torch.nn.Module):
             try:
@@ -66,6 +72,15 @@ def patch_soup_setup(dtype):
                 register_layers(model)
             except Exception as exc:  # noqa: BLE001
                 print(f"solution: layer indices unknown ({exc!r})")
+            try:
+                from . import quant
+                from .stream import offload_model
+
+                if quant.STREAMER is not None and os.environ.get("SOLUTION_STREAM_LAZY") != "1":
+                    print(f"solution: {offload_model(model)} weights streamed from the host")
+                    mark("weights-on-host")
+            except Exception as exc:  # noqa: BLE001
+                print(f"solution: weights left on the GPU ({exc!r})")
         return result
 
     cls._setup_transformers = _setup_transformers

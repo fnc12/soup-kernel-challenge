@@ -24,7 +24,7 @@ import triton
 import triton.language as tl
 
 IGNORE_INDEX = -100
-ROWS = 256  # positions per chunk: logits chunk = ROWS x V x 2 bytes (78 MB at V = 151,936)
+ROWS = int(__import__("os").environ.get("SOLUTION_HEAD_ROWS", "256"))  # positions per chunk: logits chunk = ROWS x V x 2 bytes (78 MB at V = 151,936)
 
 
 @triton.jit(do_not_specialize=["stride_l", "stride_g", "V"])

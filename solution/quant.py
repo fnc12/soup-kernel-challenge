@@ -19,6 +19,8 @@ import torch
 import triton
 import triton.language as tl
 
+STREAMER = None  # a stream.Streamer when SOLUTION_STREAM=1: the packed bytes live on the host
+
 NF4 = (-1.0, -0.6961928009986877, -0.5250730514526367, -0.39491748809814453,
        -0.28444138169288635, -0.18477343022823334, -0.09105003625154495, 0.0,
        0.07958029955625534, 0.16093020141124725, 0.24611230194568634, 0.33791524171829224,
@@ -93,7 +95,19 @@ class QuantWeight:
         self.device = params[0].device
         self.code = code
         self.nf4 = _nf4_table(self.device)
-        if len(params) == 1:
+        self.streamer = None
+        release = release or STREAMER is not None
+        hosts = [getattr(s, "_solution_host", None) for s in states]
+        if any(h is not None for h in hosts):
+            if not all(h is not None for h in hosts):
+                raise ValueError("some weights are on the host, some on the GPU")
+            # taken to the host as the model loaded (stream.patch_load): assembled there
+            self.packed = torch.cat([h[0] for h in hosts]) if len(hosts) > 1 else hosts[0][0]
+            self.absmax = torch.cat([h[1] for h in hosts]) if len(hosts) > 1 else hosts[0][1]
+            self.scale2 = torch.cat([s.state2.absmax.float().view(-1) for s in states])
+            for st in states:
+                st._solution_host = None  # the stacked copy is the only one read from now on
+        elif len(params) == 1 and not release:
             self.packed = params[0].data.view(-1)
             self.absmax = states[0].absmax.view(-1)
             self.scale2 = states[0].state2.absmax.float().view(-1)
@@ -111,14 +125,22 @@ class QuantWeight:
                                              dtype=torch.float32, device=self.device) for s in states])
         assert self.packed.numel() * 2 == self.N * self.K
         assert self.scale2.numel() == self.offsets.numel() == self.N * self.K // (BLOCK * BLOCK2)
+        self.n_bytes = self.packed.numel()
+        if STREAMER is not None:
+            STREAMER.register(self)  # the bytes move to pinned host memory, see solution/stream.py
+        elif not self.packed.is_cuda:
+            raise ValueError("weights on the host without a streamer")
 
     def dequantize(self, dtype):
-        n_bytes = self.packed.numel()
+        n_bytes = self.n_bytes
+        packed, absmax = (self.packed, self.absmax) if self.streamer is None else self.streamer.fetch(self)
         out = torch.empty((self.N * self.K,), dtype=dtype, device=self.device)
         BYTES = 1024  # 2048 values = 32 blocks per program (measured: on par with bitsandbytes)
         nf4_dequant_kernel[(triton.cdiv(n_bytes, BYTES),)](
-            self.packed, self.absmax, self.code, self.scale2, self.offsets, self.nf4, out, n_bytes,
+            packed, absmax, self.code, self.scale2, self.offsets, self.nf4, out, n_bytes,
             BLOCK=BLOCK, BLOCK2=BLOCK2, BYTES=BYTES, num_warps=8)
+        if self.streamer is not None:
+            self.streamer.release(self, packed, absmax)
         return out.view(self.N, self.K)
 
 
@@ -149,5 +171,6 @@ def quant_weight_of(module):
     if qw is None or getattr(module, "_solution_qw_key", None) != key:
         qw = QuantWeight([module.weight])
         module._solution_qw = qw
-        module._solution_qw_key = key
+        # after the key: a streamed weight has just given its storage back (new data_ptr)
+        module._solution_qw_key = (module.weight.data_ptr(), tuple(module.weight.quant_state.shape))
     return qw

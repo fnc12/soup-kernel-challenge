@@ -3,7 +3,7 @@
 ## Links
 - Repository, final commit: https://github.com/BAITC-Hacks/hack-a8ca734b-solo-ai-team/commit/<sha>
 - Public Kaggle notebook, the saved version (`COMMIT` in it = the sha above; the same link is in
-  the README): https://www.kaggle.com/code/fnc123/soup-kernel-challenge-solo-ai-team?scriptVersionId=<version>
+  the README): https://www.kaggle.com/code/fnc123/soup-kernel-challenge-studio-eugene-zakharov?scriptVersionId=<version>
 - Demo video (up to 3 minutes): <link>
 - Presentation: <link>
 

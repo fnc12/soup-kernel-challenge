@@ -120,6 +120,40 @@ Accompanying changes (no kernels, but they are where much of the memory went):
   gate|up activations (the largest activation of the model) of the last N decoder layers are
   rebuilt in the backward pass from the saved input instead of being kept; our own autograd
   function, not Soup's `gradient_checkpointing` switch. See the table above for the trade-off.
+- **The 4-bit weights wait in host memory** (`stream.py`, `SOLUTION_STREAM`, default {STREAM_DEFAULT}).
+  The frozen NF4 weights of the 28 decoder layers (about 650 MB packed) are read once per
+  forward and once per backward of their layer, always in the same order, and otherwise sit on
+  the GPU for the whole run. As bitsandbytes quantizes each weight at load time, its packed bytes
+  and absmax codes go to pinned host memory and the GPU keeps a zero-stride placeholder, so the
+  model's load never holds all 4-bit weights on the GPU at once either. The first step records
+  the order in which the weights are touched; from the second step on, each access also starts
+  the copies of the next four weights (about a layer) on a separate CUDA stream into a fixed
+  64 MB ring of staging memory, so a layer's bytes are on the GPU before its first matmul and
+  their region is reused once the unpacking kernel has read it (an event per region, no
+  synchronisation of the compute stream). The same bytes go through the same unpacking kernel;
+  nothing is cached between runs or precomputed, the copies ride the PCIe bus while the GPU
+  computes the previous layer.
+- **Saved activations wait in host memory** (`activations.py`, `SOLUTION_OFFLOAD`, default
+  {OFFLOAD_DEFAULT}). Everything autograd keeps for the backward pass of the decoder layers (the
+  fp32 residual inputs of the norms, the inputs of the projections, attention's q/k/v and
+  output, the dropout masks; tensors of 1 MB and more) is copied right after it is produced to a
+  pinned host arena on a second CUDA stream, and the GPU copy is released. The backward pass
+  asks for them in roughly the reverse order; each request also starts the copies of the next
+  eight tensors back to the GPU, so the bus works while the GPU computes. This is our own
+  pack/unpack pair on `torch.autograd.graph.saved_tensors_hooks`; Soup's own
+  `activation_offloading` switch stays as the base run has it. The tensors are the same bytes:
+  nothing is recomputed or approximated.
+- **Start-up** (`startup.py`). The measured command includes about 20 s that are not training:
+  imports, the model's load, the dataset's tokenisation. Four things we do not change but make
+  cheaper: `importlib.metadata.version()` walks every dist-info directory on each call and
+  transformers / trl / peft call it for dozens of packages at import, so one walk fills a table;
+  `datasets` hashes the tokenizer (dill) to fingerprint `map`, with caching off it draws a random
+  fingerprint and runs the very same `map`; PEFT's `prepare_model_for_kbit_training` upcasts the
+  467 MB embedding to fp32 on the GPU (fp16 and fp32 copies there together: the highest point of
+  the run once training itself is light), the cast happens on the CPU and the table comes back
+  as the fp16 it is; and transformers moves each checkpoint tensor with one
+  `to(device, dtype)`, which lands the bf16 bytes on the GPU and converts there, so tensors over
+  64 MB (the embedding) are converted on the CPU first.
 
 What stays exactly as in the base run: the model, data, batches, steps, LoRA (r, alpha, dropout,
 targets), optimizer and schedule, every Soup switch, the adapter's tensors, Soup's outputs
@@ -147,6 +181,13 @@ python harness/check_rules.py         # the ten checks -> runs/checks.json
 Switches (environment variables, for ablations; all off by default except where noted):
 `SOLUTION_RECOMPUTE=N` rebuild the gate|up activations of the last N layers in the backward pass
 (default 14; 0 keeps everything, 28 rebuilds every layer);
+`SOLUTION_STREAM=1` keep the NF4 weights in pinned host memory and stream them one layer ahead
+({STREAM_SWITCH}; `SOLUTION_STREAM_AHEAD=N` weights prefetched, default 4, `SOLUTION_STREAM_RING_MB`,
+`SOLUTION_STREAM_LOAD=0` keeps the weights on the GPU until the first step);
+`SOLUTION_OFFLOAD=1` keep the saved activations in pinned host memory ({OFFLOAD_SWITCH};
+`SOLUTION_OFFLOAD_AHEAD`, `SOLUTION_OFFLOAD_MIN_MB`, `SOLUTION_OFFLOAD_ARENA_MB`);
+`SOLUTION_NO_STARTUP=1` leaves the start-up as it is; `SOLUTION_TIMELINE=1` prints a timeline of
+the run with memory figures;
 `SOLUTION_NO_CE`, `SOLUTION_NO_RMSNORM`, `SOLUTION_NO_NF4`, `SOLUTION_NO_MLP`, `SOLUTION_NO_ATTN`,
 `SOLUTION_NO_ROPE`, `SOLUTION_NO_LOWPREC`, `SOLUTION_NO_EMBED` (=1 turns that part off).
 
