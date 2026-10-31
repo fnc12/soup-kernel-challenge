@@ -5,7 +5,7 @@
   (the documentation commits after it change README.md / SUBMISSION.md only). Public mirror of the same
   commits, cloned by the notebook: https://github.com/fnc12/soup-kernel-challenge
 - Public Kaggle notebook, the saved version (`COMMIT` in it = the sha above; the same link is in
-  the README): https://www.kaggle.com/code/fnc123/soup-kernel-challenge?scriptVersionId=<version>
+  the README): https://www.kaggle.com/code/fnc123/soup-kernel-challenge?scriptVersionId=364298049
 - Demo video (up to 3 minutes): <link>
 - Presentation: <link>
 
