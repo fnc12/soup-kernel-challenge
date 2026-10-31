@@ -28,11 +28,11 @@ def mark(name):
                        f" max-alloc {mib(torch.cuda.max_memory_allocated())} max-res {mib(torch.cuda.max_memory_reserved())}")
         except Exception:  # noqa: BLE001
             pass
-        print(f"[solution-tl] {name} +{time.perf_counter() - _T0:.2f}s{mem}", file=sys.stderr, flush=True)
+        print(f"[solution-tl] {name} +{time.perf_counter() - _T0:.2f}s{mem} @{time.time():.3f}", file=sys.stderr, flush=True)
 
 
 if _ON:
-    atexit.register(mark, "exit")
+    atexit.register(mark, "exit")  # LIFO: runs after everything registered later, before `leave`
 
 
 def cache_package_versions():
@@ -164,4 +164,49 @@ def patch_allocator_warmup():
     if not hasattr(modeling_utils, "caching_allocator_warmup"):
         return False
     modeling_utils.caching_allocator_warmup = lambda *args, **kwargs: None
+    return True
+
+
+_EXIT = {"code": None}
+
+
+def patch_fast_exit():
+    """The measured command ends when the process ends. After `soup train` has written its
+    outputs and the harness its metrics, the interpreter still spends a while tearing down:
+    freeing the pinned host memory and the CUDA context, collecting every object. The final
+    `sys.exit(0)` is noted, and at the end of the atexit handlers every open file is flushed and
+    the process leaves at once (`os._exit`); a run that ends any other way is left alone."""
+    original = sys.exit
+
+    def exit(code=None):
+        _EXIT["code"] = code
+        original(code)
+
+    sys.exit = exit
+
+    def leave():
+        if _EXIT["code"] not in (0, None) or os.environ.get("SOLUTION_NO_FAST_EXIT") == "1":
+            return
+        try:
+            import gc
+            import io
+
+            for obj in gc.get_objects():
+                if isinstance(obj, io.IOBase) and not obj.closed and obj.writable():
+                    try:
+                        obj.flush()
+                    except Exception:  # noqa: BLE001
+                        pass
+            sys.stdout.flush()
+            sys.stderr.flush()
+        except Exception:  # noqa: BLE001
+            return
+        os._exit(0)
+
+    # atexit runs handlers last-registered first; this one must be the very last to run, so it is
+    # registered here, before any other module's handler, by re-registering the earlier ones after it
+    atexit.register(leave)
+    if _ON:
+        atexit.unregister(mark)
+        atexit.register(mark, "exit")
     return True

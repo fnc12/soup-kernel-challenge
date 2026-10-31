@@ -53,6 +53,13 @@ each kernel works, the merged weights and the padding-free decoder, results agai
   dequant-GEMM was not attempted (cuBLAS wins on a T4 for these shapes).
 - The patches target Qwen2 + NF4 (blocks of 64, double quantization) + PEFT's vanilla LoRA;
   other layouts fall through to the original code.
-- `SOLUTION_RECOMPUTE=N` (default 14): rebuilding the gate|up activations of more layers buys memory for time: 28 layers measure 1.55x / 4.47x, 0 layers 1.64x / 3.20x (README has the full table).
+- `SOLUTION_RECOMPUTE=N` (default 14): rebuilding the gate|up activations of more layers buys memory for time (README has the table).
+- The NF4 weights and the saved activations of the decoder wait in pinned host memory between uses
+  (`SOLUTION_STREAM`, `SOLUTION_OFFLOAD`, both on by default): the same bytes, nothing recomputed or
+  approximated; the copies ride the PCIe bus on their own CUDA streams while the GPU computes. The
+  frozen fp16 embedding / head table (467 MB) stays on the GPU: streaming it through the head would
+  cost more time than its memory is worth under the scoring.
+- Soup's own switches (`gradient_checkpointing`, `activation_offloading`, ...) are untouched; the
+  recompute and the offloading above are our own autograd functions and saved-tensor hooks.
 - Next: a Triton attention kernel over the packed rows, and the NF4 unpacking fused into the
   GEMM's operand load.

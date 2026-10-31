@@ -89,6 +89,9 @@ def apply():
             patch_kbit_upcast()
             patch_loader_cast()
             patch_allocator_warmup()
+            from .startup import patch_fast_exit
+
+            patch_fast_exit()
         except Exception as exc:  # noqa: BLE001
             print(f"solution: k-bit upcast left on the GPU ({exc!r})")
     if os.environ.get("SOLUTION_NO_RMSNORM") != "1":
