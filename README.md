@@ -40,6 +40,8 @@ that point the GPU becomes the bottleneck and the time grows. The base's wall ti
 between 81.9 and 91.4 s across all our runs (±3% run to run), so differences of a few percent
 between rows are within noise.
 
+Demo video (2 min 40 s): https://drive.google.com/file/d/175r9nxGo2h2UfZbKFsmta3FrMR0SYkTU/view?usp=sharing · presentation: https://drive.google.com/file/d/1vZbd4U6QlZYnlpswk6z8-b91tClaT5Kk/view?usp=sharing (`docs/presentation.pdf`).
+
 Kaggle notebook (the jury's template, `COMMIT = 9667db8`, one run per side): https://www.kaggle.com/code/fnc123/soup-kernel-challenge?scriptVersionId=364298049, measured 1.54x / 4.38x (base 92.5 s, solution 59.9 s, 3,273 MiB, all checks passed; `results/t4-run17-jury-notebook`). The two-repeat measurement of the same commit, a public copy of our measurement notebook: https://www.kaggle.com/code/fnc123/soup-kc-measure?scriptVersionId=364278048.
 
 ## What we did

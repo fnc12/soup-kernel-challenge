@@ -6,8 +6,8 @@
   commits, cloned by the notebook: https://github.com/fnc12/soup-kernel-challenge
 - Public Kaggle notebook, the saved version (`COMMIT` in it = the sha above; the same link is in
   the README): https://www.kaggle.com/code/fnc123/soup-kernel-challenge?scriptVersionId=364298049
-- Demo video (up to 3 minutes): <link>
-- Presentation: <link>
+- Demo video (2 min 40 s): https://drive.google.com/file/d/175r9nxGo2h2UfZbKFsmta3FrMR0SYkTU/view?usp=sharing
+- Presentation: https://drive.google.com/file/d/1vZbd4U6QlZYnlpswk6z8-b91tClaT5Kk/view?usp=sharing (`docs/presentation.pdf` in the repository)
 
 ## Team (up to 4 people)
 | Name | Role | GitHub | Kaggle | Contact (captain) |
