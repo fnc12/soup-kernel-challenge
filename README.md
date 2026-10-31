@@ -9,17 +9,18 @@ passing, see `results/`):
 
 | | Base Soup 0.77.0 | This solution | Ratio |
 |---|---|---|---|
-| Whole `soup train` command (mean of 2 runs, order base, solution, solution, base) | 83.9 s | 50.2 s | **1.67x** faster |
-| Peak GPU memory (nvidia-smi, max of the runs) | 14,345 MiB | 3,809 MiB | **3.77x** less |
-| Held-out eval loss | 2.04965 | 2.04963 | -0.001% |
-| Loss curve vs base | | first step 0.03%, mean 0.04% | |
-| Own Triton kernels, share of training time | | 14.9% | |
+| Whole `soup train` command (mean of 2 runs, order base, solution, solution, base) | 85.73 s | 53.65 s | **1.60x** faster |
+| Peak GPU memory (nvidia-smi, max of the runs) | 14,345 MiB | 3,553 MiB | **4.04x** less |
+| Held-out eval loss | 2.04967 | 2.04962 | -0.002% |
+| Loss curve vs base | | first step 0.03%, mean 0.01% | |
+| Own Triton kernels, share of training time | | 14.1% | |
 
-`results/t4-run10-recompute14-2repeats`; a second measurement of the same configuration through
-the defaults alone (no environment variables, `results/t4-run14-default-2repeats`) gave 1.63x and
-the same 3,809 MiB. The default configuration rebuilds the gate|up activations of the last 14
-decoder layers in the backward pass (`SOLUTION_RECOMPUTE=14`); the same code with other counts,
-by the same protocol:
+`results/t4-run15-stream14-2repeats`: the first revision with the 4-bit weights streamed from host
+memory (section "What we did"); the same code with the weights resident on the GPU measured 1.63x /
+3.77x, 3,809 MiB (`results/t4-run14-default-2repeats`), the step time unchanged (0.437 s against
+0.449 s). The default configuration rebuilds the gate|up activations of the last 14 decoder layers
+in the backward pass (`SOLUTION_RECOMPUTE=14`); the same code with other counts, measured by the
+same protocol with the weights resident:
 
 | `SOLUTION_RECOMPUTE` (layers rebuilt) | Time | Memory | Peak | Results folder |
 |---|---|---|---|---|
@@ -35,7 +36,7 @@ that point the GPU becomes the bottleneck and the time grows. The base's wall ti
 between 81.9 and 91.4 s across all our runs (±3% run to run), so differences of a few percent
 between rows are within noise.
 
-Kaggle notebook: _link to be added at submission_ (`SUBMISSION.md` carries the final commit).
+Kaggle notebook (the jury's template, `COMMIT = 9667db8`): https://www.kaggle.com/code/fnc123/soup-kernel-challenge?scriptVersionId=<version>
 
 ## What we did
 
@@ -120,7 +121,7 @@ Accompanying changes (no kernels, but they are where much of the memory went):
   gate|up activations (the largest activation of the model) of the last N decoder layers are
   rebuilt in the backward pass from the saved input instead of being kept; our own autograd
   function, not Soup's `gradient_checkpointing` switch. See the table above for the trade-off.
-- **The 4-bit weights wait in host memory** (`stream.py`, `SOLUTION_STREAM`, default {STREAM_DEFAULT}).
+- **The 4-bit weights wait in host memory** (`stream.py`, `SOLUTION_STREAM`, default on).
   The frozen NF4 weights of the 28 decoder layers (about 650 MB packed) are read once per
   forward and once per backward of their layer, always in the same order, and otherwise sit on
   the GPU for the whole run. As bitsandbytes quantizes each weight at load time, its packed bytes
@@ -134,7 +135,7 @@ Accompanying changes (no kernels, but they are where much of the memory went):
   nothing is cached between runs or precomputed, the copies ride the PCIe bus while the GPU
   computes the previous layer.
 - **Saved activations wait in host memory** (`activations.py`, `SOLUTION_OFFLOAD`, default
-  {OFFLOAD_DEFAULT}). Everything autograd keeps for the backward pass of the decoder layers (the
+  off). Everything autograd keeps for the backward pass of the decoder layers (the
   fp32 residual inputs of the norms, the inputs of the projections, attention's q/k/v and
   output, the dropout masks; tensors of 1 MB and more) is copied right after it is produced to a
   pinned host arena on a second CUDA stream, and the GPU copy is released. The backward pass
@@ -182,9 +183,9 @@ Switches (environment variables, for ablations; all off by default except where 
 `SOLUTION_RECOMPUTE=N` rebuild the gate|up activations of the last N layers in the backward pass
 (default 14; 0 keeps everything, 28 rebuilds every layer);
 `SOLUTION_STREAM=1` keep the NF4 weights in pinned host memory and stream them one layer ahead
-({STREAM_SWITCH}; `SOLUTION_STREAM_AHEAD=N` weights prefetched, default 4, `SOLUTION_STREAM_RING_MB`,
+(on by default; `SOLUTION_STREAM=0` keeps the weights on the GPU; `SOLUTION_STREAM_AHEAD=N` weights prefetched, default 4, `SOLUTION_STREAM_RING_MB`,
 `SOLUTION_STREAM_LOAD=0` keeps the weights on the GPU until the first step);
-`SOLUTION_OFFLOAD=1` keep the saved activations in pinned host memory ({OFFLOAD_SWITCH};
+`SOLUTION_OFFLOAD=1` keep the saved activations in pinned host memory (off by default: exact on the cards we have (Ada, Blackwell, also with fp16 forced and with the copy and compute streams held back on purpose) and wrong on a Kaggle T4 on 2026-10-31, where the loss drifted by 20% from the second step on; we did not find the cause in time, so it stays a switch;
 `SOLUTION_OFFLOAD_AHEAD`, `SOLUTION_OFFLOAD_MIN_MB`, `SOLUTION_OFFLOAD_ARENA_MB`);
 `SOLUTION_NO_STARTUP=1` leaves the start-up as it is; `SOLUTION_TIMELINE=1` prints a timeline of
 the run with memory figures;
